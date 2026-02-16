@@ -1,0 +1,7 @@
+node_modules/
+dist/
+release/
+data/
+*.js.map
+.env
+scripts/
