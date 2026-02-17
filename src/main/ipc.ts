@@ -21,6 +21,12 @@ import axios from 'axios';
 import { refreshAccountToken, authenticatedRequest } from './helpers/auth/tokenRefresh';
 import { Endpoints } from './helpers/endpoints';
 import { launchGame } from './helpers/cmd/launcher';
+import * as devbuilds from './helpers/cmd/devbuilds';
+import * as dupe from './helpers/cmd/dupe';
+import * as vbucksInfo from './helpers/cmd/vbucks';
+import * as epicstatus from './helpers/epic/epicstatus';
+import * as redeemcodes from './helpers/cmd/redeemcodes';
+import * as xpboosts from './helpers/cmd/xpboosts';
 import * as shop from './managers/shop/ShopManager';
 import type { AutoKickAccountConfig, AccountsData } from '../shared/types';
 
@@ -311,6 +317,48 @@ export function registerIpcHandlers(storage: Storage): void {
     if (canceled || !filePath) return { saved: false };
     await fs.promises.writeFile(filePath, jsonString, 'utf8');
     return { saved: true, path: filePath };
+  });
+
+  // ── Dev Builds ─────────────────────────────────────────────
+  ipcMain.handle('files:devbuild-status', async () => {
+    return devbuilds.getDevBuildStatus(storage);
+  });
+
+  ipcMain.handle('files:devbuild-toggle', async () => {
+    return devbuilds.toggleDevBuild(storage);
+  });
+
+  // ── Dupe ───────────────────────────────────────────────────
+  ipcMain.handle('dupe:execute', async () => {
+    return dupe.executeDupe(storage);
+  });
+
+  // ── V-Bucks Info ───────────────────────────────────────────
+  ipcMain.handle('vbucks:get-info', async () => {
+    return vbucksInfo.getVbucksInfo(storage);
+  });
+
+  // ── Epic Status ────────────────────────────────────────────
+  ipcMain.handle('epicstatus:get-all', async () => {
+    return epicstatus.getEpicStatus(storage);
+  });
+
+  // ── Redeem Codes ───────────────────────────────────────────
+  ipcMain.handle('redeemcodes:redeem', async (_e, code: string) => {
+    return redeemcodes.redeemCode(storage, code);
+  });
+
+  ipcMain.handle('redeemcodes:friend-codes', async () => {
+    return redeemcodes.getFriendCodes(storage);
+  });
+
+  // ── XP Boosts ──────────────────────────────────────────────
+  ipcMain.handle('xpboosts:get-profile', async () => {
+    return xpboosts.getXPBoosts(storage);
+  });
+
+  ipcMain.handle('xpboosts:consume', async (_e, type: 'personal' | 'teammate', amount: number, targetAccountId?: string) => {
+    return xpboosts.consumeXPBoosts(storage, type, amount, targetAccountId);
   });
 
   // ── MCP ────────────────────────────────────────────────────

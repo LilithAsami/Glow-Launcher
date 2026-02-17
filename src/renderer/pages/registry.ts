@@ -3,6 +3,9 @@ import { accountsPage } from './accounts';
 import { alertsPage } from './alerts';
 import { autokickPage } from './autokick';
 import { filesPage } from './files';
+import { dupePage } from './dupe';
+import { vbucksPage } from './vbucks';
+import { epicStatusPage } from './epicstatus';
 import { lockerPage } from './locker';
 import { mcpPage } from './mcp';
 import { securityPage } from './security';
@@ -16,6 +19,8 @@ import { taxiPage } from './taxi';
 import { shopPage } from './shop';
 import { ghostequipPage } from './ghostequip';
 import { friendsPage } from './friends';
+import { redeemCodesPage } from './redeemcodes';
+import { xpBoostsPage } from './xpboosts';
 
 // ============================================================
 //  PAGE REGISTRY  (sidebar pages only)
@@ -42,12 +47,17 @@ export const pages: PageDefinition[] = [
   stalkPage,
   partyPage,
   ghostequipPage,
+  dupePage,
+  vbucksPage,
+  epicStatusPage,
   eulaPage,
   authPageDef,
   statusPage,
   taxiPage,
   securityPage,
   autokickPage,
+  redeemCodesPage,
+  xpBoostsPage,
   settingsPage,
 ].sort((a, b) => a.order - b.order);
 

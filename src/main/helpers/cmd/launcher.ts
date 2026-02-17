@@ -1,17 +1,19 @@
 /**
  * Game Launcher
  *
- * Flow (matches bot's cmd.ts exactly):
- *   1. Try Launcher/ANDROID device_auth directly
- *   2. If fails → FN device_auth → exchange → Launcher/ANDROID exchange_code
- *   3. Get final exchange code from the Launcher/ANDROID token
- *   4. Build CMD string and execute
+ * Flow:
+ *   1. Try ANDROID device_auth directly
+ *   2. If fails → Fortnite device_auth → exchange → ANDROID exchange_code
+ *   3. Get exchange code from ANDROID token
+ *   4. Exchange that code for launcherAppClient2 token (required for game launch)
+ *   5. Get final exchange code from launcherAppClient2 token
+ *   6. Build CMD string and execute
  *
  * CMD:
  *   start /d "{fortnitePath}\FortniteGame\Binaries\Win64"
  *     FortniteLauncher.exe
  *     -AUTH_LOGIN=unused
- *     -AUTH_PASSWORD={exchangeCode}
+ *     -AUTH_PASSWORD={finalExchangeCode}     # from fortnitePCGameClient
  *     -AUTH_TYPE=exchangecode
  *     -epicapp=Fortnite
  *     -epicenv=Prod
@@ -25,7 +27,7 @@ import { existsSync } from 'fs';
 import * as path from 'path';
 import { BrowserWindow } from 'electron';
 import { Endpoints } from '../endpoints';
-import { ANDROID_CLIENT, FORTNITE_CLIENT } from '../auth/clients';
+import { ANDROID_CLIENT, FORTNITE_CLIENT, LAUNCHER_CLIENT } from '../auth/clients';
 import type { Storage } from '../../storage';
 import type { AccountsData, StoredAccount } from '../../../shared/types';
 
@@ -168,11 +170,11 @@ export async function launchGame(storage: Storage): Promise<LaunchResult> {
 
     send('launch:status', { status: 'auth', message: 'Authenticating...' });
 
-    // Step 1: Try Launcher (ANDROID) device_auth directly
-    let launcherToken = await getDeviceAuthToken(account, ANDROID_CLIENT.auth);
+    // Step 1: Try ANDROID device_auth directly
+    let currentToken = await getDeviceAuthToken(account, ANDROID_CLIENT.auth);
 
-    // Step 2: If that fails, use FN client → exchange → Launcher
-    if (!launcherToken) {
+    // Step 2: If that fails, use Fortnite client → exchange → ANDROID
+    if (!currentToken) {
       const fnToken = await getDeviceAuthToken(account, FORTNITE_CLIENT.auth);
       if (!fnToken) {
         return { success: false, message: 'Failed to authenticate — no access token' };
@@ -183,16 +185,27 @@ export async function launchGame(storage: Storage): Promise<LaunchResult> {
         return { success: false, message: 'Failed to get exchange code from FN token' };
       }
 
-      launcherToken = await exchangeCodeForToken(exchange1, ANDROID_CLIENT.auth);
-      if (!launcherToken) {
-        return { success: false, message: 'Failed to exchange for Launcher token' };
+      currentToken = await exchangeCodeForToken(exchange1, ANDROID_CLIENT.auth);
+      if (!currentToken) {
+        return { success: false, message: 'Failed to exchange for ANDROID token' };
       }
     }
 
-    // Step 3: Get final exchange code from Launcher token
+    // Step 3: Exchange from current token to launcherAppClient2 (required for game launch)
+    const exchange2 = await getExchangeCode(currentToken);
+    if (!exchange2) {
+      return { success: false, message: 'Failed to get exchange code from current token' };
+    }
+
+    const launcherToken = await exchangeCodeForToken(exchange2, LAUNCHER_CLIENT.auth);
+    if (!launcherToken) {
+      return { success: false, message: 'Failed to exchange for launcher client token' };
+    }
+
+    // Step 4: Get final exchange code from launcher client token
     const finalExchange = await getExchangeCode(launcherToken);
     if (!finalExchange) {
-      return { success: false, message: 'Failed to get final exchange code' };
+      return { success: false, message: 'Failed to get final exchange code from launcher client' };
     }
 
     send('launch:status', { status: 'launching', message: 'Launching Fortnite...' });

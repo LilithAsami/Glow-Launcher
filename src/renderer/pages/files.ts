@@ -1,10 +1,17 @@
 import type { PageDefinition } from '../../shared/types';
 
 let el: HTMLElement | null = null;
+
+// ── World Info state ──────────────────────────────────────────
 let loading = false;
 let worldInfoData: any = null;
 let worldInfoStats: { missions: number; alerts: number; theaters: number; sizeMB: string } | null = null;
 let errorMsg: string | null = null;
+
+// ── Dev Builds state ──────────────────────────────────────────
+let devLoading = false;
+let devActivated: boolean | null = null;
+let devError: string | null = null;
 
 // ─── Helpers ──────────────────────────────────────────────────
 
@@ -16,6 +23,10 @@ function getDefaultFileName(): string {
   return `worldinfo_${y}_${m}_${d}`;
 }
 
+function esc(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
 // ─── Draw ─────────────────────────────────────────────────────
 
 function draw(): void {
@@ -24,8 +35,8 @@ function draw(): void {
   el.innerHTML = `
     <div class="files-page">
       <div class="files-header">
-        <h1 class="page-title">Files</h1>
-        <p class="page-subtitle">Generate and download data files from your Fortnite account</p>
+        <h1 class="page-title">Files & Tools</h1>
+        <p class="page-subtitle">File exports and game patches</p>
       </div>
 
       <div class="files-grid">
@@ -97,16 +108,56 @@ function draw(): void {
           </div>
         </div>
 
-        <!-- Placeholder for future files -->
-        <div class="files-card files-card--soon">
-          <div class="files-card-icon files-card-icon--muted">
+        <!-- Dev Builds Card -->
+        <div class="files-card" id="files-devbuilds-card">
+          <div class="files-card-icon ${devActivated ? 'files-card-icon--active' : ''}">
             <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>
+              <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
             </svg>
           </div>
           <div class="files-card-body">
-            <h3 class="files-card-title files-card-title--muted">More files soon</h3>
-            <p class="files-card-desc files-card-desc--muted">Additional file exports will be added in future updates.</p>
+            <h3 class="files-card-title">Dev Builds</h3>
+            <p class="files-card-desc">Patch pakchunk10 to enable dev build features. Modifies game files directly.</p>
+
+            ${devLoading ? `
+              <div class="files-card-loading">
+                <div class="files-spinner"></div>
+                <span>Patching file...</span>
+              </div>
+            ` : devError ? `
+              <div class="files-card-error">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+                <span>${esc(devError)}</span>
+              </div>
+              <button class="files-btn files-btn--primary" id="files-devbuilds-toggle">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+                Retry
+              </button>
+            ` : devActivated !== null ? `
+              <div class="files-devbuilds-status">
+                <span class="files-devbuilds-badge ${devActivated ? 'files-devbuilds-badge--on' : 'files-devbuilds-badge--off'}">
+                  ${devActivated ? 'ACTIVATED' : 'DEACTIVATED'}
+                </span>
+              </div>
+              <div class="files-card-actions">
+                <button class="files-btn ${devActivated ? 'files-btn--danger' : 'files-btn--primary'}" id="files-devbuilds-toggle">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    ${devActivated
+                      ? '<path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/>'
+                      : '<polygon points="5 3 19 12 5 21 5 3"/>'}
+                  </svg>
+                  ${devActivated ? 'Deactivate' : 'Activate'}
+                </button>
+                <button class="files-btn files-btn--ghost" id="files-devbuilds-check" title="Re-check status">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+                </button>
+              </div>
+            ` : `
+              <button class="files-btn files-btn--primary" id="files-devbuilds-check">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                Check Status
+              </button>
+            `}
           </div>
         </div>
       </div>
@@ -155,7 +206,12 @@ function bindEvents(): void {
   const refreshBtn = el.querySelector('#files-worldinfo-refresh') as HTMLButtonElement | null;
   refreshBtn?.addEventListener('click', () => loadWorldInfo());
 
-  // Modal events
+  const devCheckBtn = el.querySelector('#files-devbuilds-check') as HTMLButtonElement | null;
+  devCheckBtn?.addEventListener('click', () => checkDevBuildStatus());
+
+  const devToggleBtn = el.querySelector('#files-devbuilds-toggle') as HTMLButtonElement | null;
+  devToggleBtn?.addEventListener('click', () => toggleDevBuilds());
+
   const overlay = el.querySelector('#files-modal-overlay') as HTMLElement | null;
   const closeBtn = el.querySelector('#files-modal-close') as HTMLButtonElement | null;
   const copyBtn = el.querySelector('#files-modal-copy') as HTMLButtonElement | null;
@@ -184,7 +240,6 @@ function bindEvents(): void {
     highlightJson(query);
   });
 
-  // Esc key to close
   document.addEventListener('keydown', handleEsc);
 }
 
@@ -192,7 +247,7 @@ function handleEsc(e: KeyboardEvent): void {
   if (e.key === 'Escape') closeModal();
 }
 
-// ─── Actions ──────────────────────────────────────────────────
+// ─── World Info Actions ───────────────────────────────────────
 
 async function loadWorldInfo(): Promise<void> {
   if (loading) return;
@@ -239,7 +294,6 @@ function openPreview(): void {
   const searchInput = el.querySelector('#files-modal-search-input') as HTMLInputElement;
   if (!overlay || !jsonPre) return;
 
-  // Render syntax-highlighted JSON
   const jsonStr = JSON.stringify(worldInfoData, null, 2);
   jsonPre.innerHTML = syntaxHighlight(jsonStr);
   overlay.style.display = 'flex';
@@ -250,6 +304,53 @@ function closeModal(): void {
   if (!el) return;
   const overlay = el.querySelector('#files-modal-overlay') as HTMLElement;
   if (overlay) overlay.style.display = 'none';
+}
+
+// ─── Dev Builds Actions ───────────────────────────────────────
+
+async function checkDevBuildStatus(): Promise<void> {
+  if (devLoading) return;
+  devLoading = true;
+  devError = null;
+  draw();
+
+  try {
+    const result = await window.glowAPI.files.devBuildStatus();
+    if (result.found) {
+      devActivated = result.activated;
+      devError = null;
+    } else {
+      devError = result.error || 'File not found';
+      devActivated = null;
+    }
+  } catch (err: any) {
+    devError = err.message || 'Error checking status';
+  } finally {
+    devLoading = false;
+    draw();
+  }
+}
+
+async function toggleDevBuilds(): Promise<void> {
+  if (devLoading) return;
+  devLoading = true;
+  devError = null;
+  draw();
+
+  try {
+    const result = await window.glowAPI.files.devBuildToggle();
+    if (result.success) {
+      devActivated = result.activated ?? null;
+      devError = null;
+    } else {
+      devError = result.message;
+    }
+  } catch (err: any) {
+    devError = err.message || 'Unexpected error';
+  } finally {
+    devLoading = false;
+    draw();
+  }
 }
 
 // ─── JSON Syntax Highlighting ─────────────────────────────────
@@ -270,7 +371,6 @@ function syntaxHighlight(json: string): string {
       if (/^"/.test(match)) {
         if (/:$/.test(match)) {
           cls = 'json-key';
-          // Remove trailing colon from display, we'll add it back
           const inner = escapeHtml(match.slice(1, -2));
           return `<span class="${cls}">"${inner}"</span>:`;
         } else {
@@ -298,18 +398,11 @@ function highlightJson(query: string): void {
     return;
   }
 
-  // First apply syntax highlighting then wrap matches
   let highlighted = syntaxHighlight(jsonStr);
 
   try {
     const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const regex = new RegExp(`(${escaped})`, 'gi');
-    // We need to highlight within text content only, not in tags
-    // Simple approach: highlight in the original JSON then syntax-highlight won't work well
-    // Better: do it by highlighting the raw text and then adding syntax classes
-
-    // Simpler approach: just highlight in the already-highlighted HTML
-    // but skip anything inside < >
     highlighted = highlighted.replace(/>[^<]*</g, (segment) => {
       return segment.replace(regex, '<mark class="json-match">$1</mark>');
     });
@@ -319,7 +412,6 @@ function highlightJson(query: string): void {
 
   jsonPre.innerHTML = highlighted;
 
-  // Scroll to first match
   const firstMatch = jsonPre.querySelector('.json-match');
   if (firstMatch) firstMatch.scrollIntoView({ block: 'center', behavior: 'smooth' });
 }

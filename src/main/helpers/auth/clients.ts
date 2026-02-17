@@ -19,3 +19,10 @@ export const FORTNITE_CLIENT = {
   secret: '0a2449a2-001a-451e-afec-3e812901c4d7',
   auth: encode('98f7e42c2e3a4f86a74eb43fbb41ed39', '0a2449a2-001a-451e-afec-3e812901c4d7'),
 };
+
+/** Launcher App Client 2 — used for game launch (generates final exchange code) */
+export const LAUNCHER_CLIENT = {
+  id: '34a02cf8f4414e29b15921876da36f9a',
+  secret: 'daafbccc737745039dffe53d94fc76cf',
+  auth: encode('34a02cf8f4414e29b15921876da36f9a', 'daafbccc737745039dffe53d94fc76cf'),
+};

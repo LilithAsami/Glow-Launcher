@@ -296,6 +296,79 @@ export interface GlowAPI {
   files: {
     getWorldInfo: () => Promise<{ success: boolean; data?: any; missions?: number; alerts?: number; theaters?: number; sizeMB?: string; error?: string }>;
     save: (jsonString: string, defaultName: string) => Promise<{ saved: boolean; path?: string }>;
+    devBuildStatus: () => Promise<{ found: boolean; activated: boolean; filePath: string | null; error?: string }>;
+    devBuildToggle: () => Promise<{ success: boolean; activated?: boolean; message: string }>;
+  };
+  dupe: {
+    execute: () => Promise<{ success: boolean; message: string; storageStatus?: string | null }>;
+    onStatus: (cb: (data: any) => void) => void;
+    offStatus: () => void;
+  };
+  vbucks: {
+    getInfo: () => Promise<{
+      success: boolean;
+      total: number;
+      purchased: number;
+      earned: number;
+      complimentary: number;
+      currentPlatform: string;
+      giftsAllowed: boolean;
+      giftsRemaining: number;
+      creatorCode: string | null;
+      creatorSetTime: string | null;
+      sources: { amount: number; count: number; platform: string; type: string }[];
+      displayName: string;
+      error?: string;
+    }>;
+  };
+  epicStatus: {
+    getAll: () => Promise<{
+      success: boolean;
+      lightswitch: any;
+      lightswitchError: string | null;
+      overallStatus: string;
+      overallIndicator: string;
+      groups: { id: string; name: string; status: string; position: number; children: { id: string; name: string; status: string }[] }[];
+      standalone: { id: string; name: string; status: string; position: number }[];
+      incidents: {
+        id: string; name: string; status: string; impact: string; shortlink: string;
+        createdAt: string; updatedAt: string; resolvedAt: string | null;
+        updates: { id: string; status: string; body: string; createdAt: string }[];
+      }[];
+      roadmap: { operational: number; degraded: number; partialOutage: number; majorOutage: number; maintenance: number; total: number };
+      error?: string;
+    }>;
+  };
+  redeemCodes: {
+    redeem: (code: string) => Promise<{
+      success: boolean;
+      offerId?: string;
+      accountId?: string;
+      details?: { entitlementName: string; entitlementId: string; offerId: string; namespace: string }[];
+      error?: string;
+    }>;
+    getFriendCodes: () => Promise<{
+      success: boolean;
+      epic: { codeId: string; codeType: string; dateCreated: string }[];
+      xbox: { codeId: string; codeType: string; dateCreated: string }[];
+      error?: string;
+    }>;
+  };
+  xpBoosts: {
+    getProfile: () => Promise<{
+      success: boolean;
+      personal: { itemId: string | null; quantity: number };
+      teammate: { itemId: string | null; quantity: number };
+      displayName: string;
+      error?: string;
+    }>;
+    consume: (type: 'personal' | 'teammate', amount: number, targetAccountId?: string) => Promise<{
+      success: boolean;
+      consumed: number;
+      failed: number;
+      type: 'personal' | 'teammate';
+      error?: string;
+    }>;
   };
   mcp: {
     execute: (operation: string, profileId: string) =>

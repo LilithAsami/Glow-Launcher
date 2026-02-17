@@ -92,6 +92,31 @@ contextBridge.exposeInMainWorld('glowAPI', {
     getWorldInfo: () => ipcRenderer.invoke('files:get-worldinfo'),
     save: (jsonString: string, defaultName: string) =>
       ipcRenderer.invoke('files:save', jsonString, defaultName),
+    devBuildStatus: () => ipcRenderer.invoke('files:devbuild-status'),
+    devBuildToggle: () => ipcRenderer.invoke('files:devbuild-toggle'),
+  },
+  dupe: {
+    execute: () => ipcRenderer.invoke('dupe:execute'),
+    onStatus: (cb: (data: any) => void) => {
+      ipcRenderer.removeAllListeners('dupe:status');
+      ipcRenderer.on('dupe:status', (_e, data) => cb(data));
+    },
+    offStatus: () => { ipcRenderer.removeAllListeners('dupe:status'); },
+  },
+  vbucks: {
+    getInfo: () => ipcRenderer.invoke('vbucks:get-info'),
+  },
+  epicStatus: {
+    getAll: () => ipcRenderer.invoke('epicstatus:get-all'),
+  },
+  redeemCodes: {
+    redeem: (code: string) => ipcRenderer.invoke('redeemcodes:redeem', code),
+    getFriendCodes: () => ipcRenderer.invoke('redeemcodes:friend-codes'),
+  },
+  xpBoosts: {
+    getProfile: () => ipcRenderer.invoke('xpboosts:get-profile'),
+    consume: (type: 'personal' | 'teammate', amount: number, targetAccountId?: string) =>
+      ipcRenderer.invoke('xpboosts:consume', type, amount, targetAccountId),
   },
   mcp: {
     execute: (operation: string, profileId: string) =>
