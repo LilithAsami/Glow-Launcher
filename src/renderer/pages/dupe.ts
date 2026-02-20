@@ -40,8 +40,8 @@ function draw(): void {
           <div class="dupe-info">
             <h3>How it works</h3>
             <ol class="dupe-steps">
-              <li>Enter a Save the World homebase mission (FORTOUTPOST)</li>
-              <li>Get the bugged state (storage glitch)</li>
+              <li>Enter a Save the World homebase mission (FORTOUTPOST = storm shield)</li>
+              <li>Get the bugged state (storm shield glitch)</li>
               <li>Click <strong>Execute Dupe</strong> below</li>
               <li>If the profile is locked, the app will wait and retry automatically</li>
             </ol>
@@ -166,7 +166,7 @@ async function executeDupe(): Promise<void> {
 export const dupePage: PageDefinition = {
   id: 'dupe',
   label: 'Dupe',
-  icon: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>`,
+  icon: `<img src="assets/icons/fnui/BR-STW/dupe.png" alt="Dupe" width="18" height="18" style="object-fit:contain;vertical-align:middle" />`,
   order: 19,
   render(container) {
     el = container;

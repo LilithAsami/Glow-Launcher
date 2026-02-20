@@ -13,6 +13,25 @@ let devLoading = false;
 let devActivated: boolean | null = null;
 let devError: string | null = null;
 
+// ── Trap Height state ─────────────────────────────────────────
+interface TrapListItem { name: string; guid: string; desc: string; defaultHeight: string; rarity: string; tier: string }
+interface TrapPreset { label: string; hex: string }
+
+let trapList: TrapListItem[] | null = null;
+let trapPresets: TrapPreset[] | null = null;
+let trapSelectedFamily: string | null = null;
+let trapSelectedRarity: string | null = null;
+let trapSelectedTier: string | null = null;
+let trapSelectedGuid: string | null = null;
+let trapSelectedHeight: string | null = null;
+let trapLoading = false;
+let trapError: string | null = null;
+let trapStatus: { found: boolean; isModified: boolean; currentHeight: string | null } | null = null;
+let trapModifiedCount = 0;
+
+interface ModifiedTrap { guid: string; name: string; currentHeight: string; desc: string; rarity: string; tier: string }
+let trapModifiedList: ModifiedTrap[] = [];
+
 // ─── Helpers ──────────────────────────────────────────────────
 
 function getDefaultFileName(): string {
@@ -25,6 +44,48 @@ function getDefaultFileName(): string {
 
 function esc(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// ─── Trap selector helpers ────────────────────────────────────
+
+const RARITY_ORDER = ['C', 'UC', 'R', 'VR', 'SR', '-'];
+const RARITY_LABELS: Record<string, string> = { C: 'Common', UC: 'Uncommon', R: 'Rare', VR: 'Epic', SR: 'Legendary', '-': 'Unique' };
+
+function getTrapFamilies(): string[] {
+  if (!trapList) return [];
+  const set = new Set<string>();
+  trapList.forEach(t => set.add(t.desc));
+  return [...set];
+}
+
+function getTrapRarities(): string[] {
+  if (!trapList || !trapSelectedFamily) return [];
+  const set = new Set<string>();
+  trapList.filter(t => t.desc === trapSelectedFamily).forEach(t => set.add(t.rarity));
+  return RARITY_ORDER.filter(r => set.has(r));
+}
+
+function getTrapTiers(): string[] {
+  if (!trapList || !trapSelectedFamily || !trapSelectedRarity) return [];
+  const set = new Set<string>();
+  trapList.filter(t => t.desc === trapSelectedFamily && t.rarity === trapSelectedRarity).forEach(t => set.add(t.tier));
+  return [...set].sort();
+}
+
+function resolveGuid(): string | null {
+  if (!trapList || !trapSelectedFamily || !trapSelectedRarity || !trapSelectedTier) return null;
+  const match = trapList.find(t => t.desc === trapSelectedFamily && t.rarity === trapSelectedRarity && t.tier === trapSelectedTier);
+  return match?.guid ?? null;
+}
+
+function heightLabel(hex: string): string {
+  const p = trapPresets?.find(pr => pr.hex === hex);
+  return p ? p.label : hex;
+}
+
+function formatTrapName(m: ModifiedTrap): string {
+  const rLabel = RARITY_LABELS[m.rarity] || m.rarity;
+  return `${m.desc} — ${rLabel} ${m.tier}`;
 }
 
 // ─── Draw ─────────────────────────────────────────────────────
@@ -160,6 +221,112 @@ function draw(): void {
             `}
           </div>
         </div>
+
+        <!-- Trap Height Modifier Card -->
+        <div class="files-card files-card--tall" id="files-trap-card">
+          <div class="files-card-icon ${trapModifiedCount > 0 ? 'files-card-icon--active' : ''}">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+            </svg>
+          </div>
+          <div class="files-card-body">
+            <h3 class="files-card-title">Trap Height Modifier</h3>
+            <p class="files-card-desc">Modify trap placement height in pakchunk11. Changes are reversible.</p>
+
+            ${trapError ? `
+              <div class="files-card-error">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+                <span>${esc(trapError)}</span>
+              </div>
+            ` : ''}
+
+            ${trapLoading ? `
+              <div class="files-card-loading">
+                <div class="files-spinner"></div>
+                <span>Processing...</span>
+              </div>
+            ` : trapList ? `
+              <div class="files-trap-selectors">
+                <div class="files-trap-row">
+                  <label class="files-trap-label">Trap</label>
+                  <select class="files-trap-select" id="files-trap-family">
+                    <option value="">— Select trap —</option>
+                    ${getTrapFamilies().map(f => `<option value="${esc(f)}" ${f === trapSelectedFamily ? 'selected' : ''}>${esc(f)}</option>`).join('')}
+                  </select>
+                </div>
+
+                ${trapSelectedFamily ? `
+                <div class="files-trap-row">
+                  <label class="files-trap-label">Rarity</label>
+                  <select class="files-trap-select" id="files-trap-rarity">
+                    <option value="">— Select rarity —</option>
+                    ${getTrapRarities().map(r => `<option value="${r}" ${r === trapSelectedRarity ? 'selected' : ''}>${esc(RARITY_LABELS[r] || r)}</option>`).join('')}
+                  </select>
+                </div>
+                ` : ''}
+
+                ${trapSelectedRarity ? `
+                <div class="files-trap-row">
+                  <label class="files-trap-label">Tier</label>
+                  <select class="files-trap-select" id="files-trap-tier">
+                    <option value="">— Select tier —</option>
+                    ${getTrapTiers().map(t => `<option value="${t}" ${t === trapSelectedTier ? 'selected' : ''}>${t}</option>`).join('')}
+                  </select>
+                </div>
+                ` : ''}
+
+                <div class="files-trap-row">
+                  <label class="files-trap-label">Height</label>
+                  <select class="files-trap-select" id="files-trap-height" ${!trapSelectedGuid ? 'disabled' : ''}>
+                    <option value="">— Select height —</option>
+                    ${(trapPresets ?? []).map(p => `<option value="${p.hex}" ${p.hex === trapSelectedHeight ? 'selected' : ''}>${esc(p.label)}</option>`).join('')}
+                  </select>
+                </div>
+              </div>
+
+              <div class="files-card-actions">
+                <button class="files-btn files-btn--primary" id="files-trap-apply" ${!(trapSelectedGuid && trapSelectedHeight) ? 'disabled' : ''}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+                  Apply
+                </button>
+              </div>
+
+              ${trapModifiedList.length > 0 ? `
+              <div class="files-trap-modified">
+                <div class="files-trap-modified-header">
+                  <span class="files-trap-modified-title">Modified Traps</span>
+                  <button class="files-btn files-btn--danger files-btn--sm" id="files-trap-revert-all">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+                    Revert All <span class="files-trap-count">${trapModifiedList.length}</span>
+                  </button>
+                </div>
+                ${trapModifiedList.map(m => `
+                <div class="files-trap-entry" data-guid="${m.guid}">
+                  <div class="files-trap-entry-info">
+                    <span class="files-trap-entry-name">${esc(formatTrapName(m))}</span>
+                    <span class="files-trap-entry-height">${esc(heightLabel(m.currentHeight))}</span>
+                  </div>
+                  <div class="files-trap-entry-actions">
+                    <span class="files-devbuilds-badge files-devbuilds-badge--on">ACTIVATED</span>
+                    <button class="files-btn files-btn--danger files-btn--sm files-trap-deactivate" data-guid="${m.guid}" title="Deactivate">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/>
+                      </svg>
+                      Deactivate
+                    </button>
+                  </div>
+                </div>
+                `).join('')}
+              </div>
+              ` : ''}
+            ` : `
+              <button class="files-btn files-btn--primary" id="files-trap-load">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                Load Traps
+              </button>
+            `}
+          </div>
+        </div>
       </div>
     </div>
 
@@ -211,6 +378,80 @@ function bindEvents(): void {
 
   const devToggleBtn = el.querySelector('#files-devbuilds-toggle') as HTMLButtonElement | null;
   devToggleBtn?.addEventListener('click', () => toggleDevBuilds());
+
+  // ── Trap Height ──────────────────────────────────────────
+  const trapLoadBtn = el.querySelector('#files-trap-load') as HTMLButtonElement | null;
+  trapLoadBtn?.addEventListener('click', () => loadTraps());
+
+  const trapFamilySel = el.querySelector('#files-trap-family') as HTMLSelectElement | null;
+  trapFamilySel?.addEventListener('change', () => {
+    trapSelectedFamily = trapFamilySel.value || null;
+    trapSelectedRarity = null;
+    trapSelectedTier = null;
+    trapSelectedGuid = null;
+    trapSelectedHeight = null;
+    trapStatus = null;
+    // Auto-select if only one rarity
+    const rarities = getTrapRarities();
+    if (rarities.length === 1) {
+      trapSelectedRarity = rarities[0];
+      const tiers = getTrapTiers();
+      if (tiers.length === 1) {
+        trapSelectedTier = tiers[0];
+        trapSelectedGuid = resolveGuid();
+      }
+    }
+    draw();
+  });
+
+  const trapRaritySel = el.querySelector('#files-trap-rarity') as HTMLSelectElement | null;
+  trapRaritySel?.addEventListener('change', () => {
+    trapSelectedRarity = trapRaritySel.value || null;
+    trapSelectedTier = null;
+    trapSelectedGuid = null;
+    trapSelectedHeight = null;
+    trapStatus = null;
+    // Auto-select if only one tier
+    const tiers = getTrapTiers();
+    if (tiers.length === 1) {
+      trapSelectedTier = tiers[0];
+      trapSelectedGuid = resolveGuid();
+    }
+    draw();
+  });
+
+  const trapTierSel = el.querySelector('#files-trap-tier') as HTMLSelectElement | null;
+  trapTierSel?.addEventListener('change', () => {
+    trapSelectedTier = trapTierSel.value || null;
+    trapSelectedGuid = resolveGuid();
+    trapSelectedHeight = null;
+    trapStatus = null;
+    draw();
+  });
+
+  const trapHeightSel = el.querySelector('#files-trap-height') as HTMLSelectElement | null;
+  trapHeightSel?.addEventListener('change', () => {
+    trapSelectedHeight = trapHeightSel.value || null;
+    // Update Apply button state without full redraw
+    const applyBtn = el?.querySelector('#files-trap-apply') as HTMLButtonElement | null;
+    if (applyBtn) {
+      applyBtn.disabled = !(trapSelectedGuid && trapSelectedHeight);
+    }
+  });
+
+  const trapApplyBtn = el.querySelector('#files-trap-apply') as HTMLButtonElement | null;
+  trapApplyBtn?.addEventListener('click', () => applyTrap());
+
+  const trapRevertAllBtn = el.querySelector('#files-trap-revert-all') as HTMLButtonElement | null;
+  trapRevertAllBtn?.addEventListener('click', () => revertAllTraps());
+
+  // Deactivate buttons on individual modified trap entries
+  el.querySelectorAll('.files-trap-deactivate').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const guid = (btn as HTMLElement).dataset.guid;
+      if (guid) revertSingleTrap(guid);
+    });
+  });
 
   const overlay = el.querySelector('#files-modal-overlay') as HTMLElement | null;
   const closeBtn = el.querySelector('#files-modal-close') as HTMLButtonElement | null;
@@ -353,6 +594,120 @@ async function toggleDevBuilds(): Promise<void> {
   }
 }
 
+// ─── Trap Height Actions ──────────────────────────────────────
+
+async function loadTraps(): Promise<void> {
+  if (trapLoading) return;
+  trapLoading = true;
+  trapError = null;
+  draw();
+
+  try {
+    const [list, presets, modTraps] = await Promise.all([
+      window.glowAPI.files.trapHeightList(),
+      window.glowAPI.files.trapHeightPresets(),
+      window.glowAPI.files.trapHeightModifiedTraps(),
+    ]);
+    trapList = list;
+    trapPresets = presets;
+    trapModifiedList = modTraps;
+    trapModifiedCount = modTraps.length;
+    trapError = null;
+  } catch (err: any) {
+    trapError = err.message || 'Failed to load trap data';
+  } finally {
+    trapLoading = false;
+    draw();
+  }
+}
+
+async function refreshModifiedList(): Promise<void> {
+  try {
+    trapModifiedList = await window.glowAPI.files.trapHeightModifiedTraps();
+    trapModifiedCount = trapModifiedList.length;
+  } catch { /* ignore */ }
+}
+
+async function applyTrap(): Promise<void> {
+  if (!trapSelectedGuid || !trapSelectedHeight || trapLoading) return;
+  trapLoading = true;
+  trapError = null;
+  draw();
+
+  try {
+    const result = await window.glowAPI.files.trapHeightApply(trapSelectedGuid, trapSelectedHeight);
+    if (result.success) {
+      trapError = null;
+      // Reset selectors after success
+      trapSelectedFamily = null;
+      trapSelectedRarity = null;
+      trapSelectedTier = null;
+      trapSelectedGuid = null;
+      trapSelectedHeight = null;
+      trapStatus = null;
+      await refreshModifiedList();
+    } else {
+      trapError = result.message;
+    }
+  } catch (err: any) {
+    trapError = err.message || 'Unexpected error';
+  } finally {
+    trapLoading = false;
+    draw();
+  }
+}
+
+async function revertSingleTrap(guid: string): Promise<void> {
+  if (trapLoading) return;
+  trapLoading = true;
+  trapError = null;
+  draw();
+
+  try {
+    const result = await window.glowAPI.files.trapHeightRevert(guid);
+    if (result.success) {
+      trapError = null;
+      await refreshModifiedList();
+    } else {
+      trapError = result.message;
+    }
+  } catch (err: any) {
+    trapError = err.message || 'Unexpected error';
+  } finally {
+    trapLoading = false;
+    draw();
+  }
+}
+
+async function revertAllTraps(): Promise<void> {
+  if (trapLoading) return;
+  trapLoading = true;
+  trapError = null;
+  draw();
+
+  try {
+    const result = await window.glowAPI.files.trapHeightRevertAll();
+    if (result.success) {
+      trapSelectedFamily = null;
+      trapSelectedRarity = null;
+      trapSelectedTier = null;
+      trapSelectedGuid = null;
+      trapSelectedHeight = null;
+      trapStatus = null;
+      trapModifiedList = [];
+      trapModifiedCount = 0;
+      trapError = null;
+    } else {
+      trapError = result.message;
+    }
+  } catch (err: any) {
+    trapError = err.message || 'Unexpected error';
+  } finally {
+    trapLoading = false;
+    draw();
+  }
+}
+
 // ─── JSON Syntax Highlighting ─────────────────────────────────
 
 function escapeHtml(str: string): string {
@@ -421,7 +776,7 @@ function highlightJson(query: string): void {
 export const filesPage: PageDefinition = {
   id: 'files',
   label: 'Files',
-  icon: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>`,
+  icon: `<img src="assets/icons/fnui/Automated/files.png" alt="Files" width="18" height="18" style="object-fit:contain;vertical-align:middle" />`,
   order: 17,
   render(container) {
     el = container;

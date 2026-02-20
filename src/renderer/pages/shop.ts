@@ -7,6 +7,7 @@ let error: string | null = null;
 let totalItems = 0;
 let collapsedSections: Set<string> = new Set();
 let vbucksTotal: number | null = null;
+let ownedIds = new Set<string>();
 
 // Image retry tracking: imageUrl → { retries, timer }
 const imgRetry = new Map<string, { retries: number; timer: ReturnType<typeof setTimeout> | null }>();
@@ -71,9 +72,10 @@ async function loadShop(): Promise<void> {
   draw();
 
   try {
-    const [shopRes, vbRes] = await Promise.all([
+    const [shopRes, vbRes, ownedRes] = await Promise.all([
       window.glowAPI.shop.getItems(),
       window.glowAPI.shop.getVbucks().catch(() => null),
+      window.glowAPI.shop.getOwned().catch(() => null),
     ]);
     if (shopRes.success) {
       sections = shopRes.sections;
@@ -82,6 +84,9 @@ async function loadShop(): Promise<void> {
       error = shopRes.error || 'Failed to load item shop';
     }
     if (vbRes?.success) vbucksTotal = vbRes.total;
+    if (ownedRes?.success && ownedRes.ownedIds) {
+      ownedIds = new Set(ownedRes.ownedIds);
+    }
   } catch (err: any) {
     error = err?.message || 'Failed to load item shop';
   }
@@ -619,8 +624,28 @@ function renderCard(item: ShopItem): string {
   const typeBadge = item.type ? `<span class="shop-card-type">${esc(item.type)}</span>` : '';
   const bundleBadge = item.isBundle ? `<span class="shop-card-bundle">Bundle (${item.bundleCount})</span>` : '';
 
+  // Owned check: for bundles check all sub-items; for single items check main id
+  let isOwned = false;
+  if (ownedIds.size > 0) {
+    if (item.isBundle && item.bundleItems && item.bundleItems.length > 0) {
+      isOwned = item.bundleItems.every((bi: BundleSubItem) => ownedIds.has(bi.id.toLowerCase()));
+    } else {
+      isOwned = ownedIds.has(item.id.toLowerCase());
+    }
+  }
+
+  const priceHtml = isOwned
+    ? `<div class="shop-card-owned">OWNED</div>`
+    : `<div class="shop-card-price">
+        ${hasDiscount ? `<span class="shop-card-oldprice">${formatPrice(item.regularPrice)}</span>` : ''}
+        <span class="shop-card-vbucks">
+          <img class="shop-vbuck-icon" src="https://fortnite-api.com/images/vbuck.png" alt="V" width="14" height="14" />
+          ${formatPrice(item.finalPrice)}
+        </span>
+      </div>`;
+
   return `
-    <div class="shop-card" data-detail="${esc(item.offerId)}" style="--card-bg: ${colors.bg}; --card-border: ${colors.border}; --card-grad-start: ${colors.gradient[0]}; --card-grad-end: ${colors.gradient[1]};">
+    <div class="shop-card ${isOwned ? 'shop-card-is-owned' : ''}" data-detail="${esc(item.offerId)}" style="--card-bg: ${colors.bg}; --card-border: ${colors.border}; --card-grad-start: ${colors.gradient[0]}; --card-grad-end: ${colors.gradient[1]};">
       <div class="shop-card-image">
         ${imgSrc
           ? `<img class="shop-card-img loading" data-src="${esc(imgSrc)}" alt="${esc(item.name)}" />`
@@ -642,21 +667,26 @@ function renderCard(item: ShopItem): string {
       <div class="shop-card-footer">
         <div class="shop-card-name" title="${esc(item.name)}">${esc(item.name)}</div>
         ${typeBadge}
-        <div class="shop-card-price">
-          ${hasDiscount ? `<span class="shop-card-oldprice">${formatPrice(item.regularPrice)}</span>` : ''}
-          <span class="shop-card-vbucks">
-            <img class="shop-vbuck-icon" src="https://fortnite-api.com/images/vbuck.png" alt="V" width="14" height="14" />
-            ${formatPrice(item.finalPrice)}
-          </span>
-        </div>
+        ${priceHtml}
       </div>
     </div>`;
 }
 // ── Account changed listener ────────────────────────────────
 
+async function refreshOwned(): Promise<void> {
+  try {
+    const res = await window.glowAPI.shop.getOwned();
+    if (res.success && res.ownedIds) {
+      ownedIds = new Set(res.ownedIds);
+      draw();
+    }
+  } catch { /* ok */ }
+}
+
 function onAccountChanged(): void {
-  console.log('[Shop] Account changed — refreshing vbucks...');
+  console.log('[Shop] Account changed — refreshing vbucks + owned...');
   refreshVbucks();
+  refreshOwned();
 }
 // ── Shop rotation listener ───────────────────────────────
 
@@ -671,13 +701,7 @@ function onShopRotated(): void {
 export const shopPage: PageDefinition = {
   id: 'shop',
   label: 'Item Shop',
-  icon: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none"
-          stroke="currentColor" stroke-width="2" stroke-linecap="round"
-          stroke-linejoin="round">
-          <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/>
-          <line x1="3" y1="6" x2="21" y2="6"/>
-          <path d="M16 10a4 4 0 0 1-8 0"/>
-        </svg>`,
+  icon: `<img src="assets/icons/fnui/BR-STW/itemshop.png" alt="Item Shop" width="18" height="18" style="object-fit:contain;vertical-align:middle" />`,
   order: 12,
 
   async render(container: HTMLElement): Promise<void> {
@@ -687,6 +711,7 @@ export const shopPage: PageDefinition = {
     error = null;
     totalItems = 0;
     collapsedSections = new Set();
+    ownedIds = new Set();
 
     // Listen for shop rotation
     window.glowAPI.shop.onRotated(onShopRotated);

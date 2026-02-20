@@ -21,6 +21,7 @@ import { ghostequipPage } from './ghostequip';
 import { friendsPage } from './friends';
 import { redeemCodesPage } from './redeemcodes';
 import { xpBoostsPage } from './xpboosts';
+import { accountMgmtPage } from './accountmgmt';
 
 // ============================================================
 //  PAGE REGISTRY  (sidebar pages only)
@@ -31,35 +32,61 @@ import { xpBoostsPage } from './xpboosts';
 //  To add a new page:
 //    1. Create a file in this folder  (e.g. mypage.ts)
 //    2. Export a PageDefinition object
-//    3. Import it here and add it to the array below
+//    3. Import it here and add it to the correct group below
 //
-//  Pages are sorted by `order`. Use position:'bottom'
-//  to pin a page to the bottom of the sidebar.
+//  Pages within each group are displayed in the order listed.
+//  Use position:'bottom' to pin a page to the bottom of the sidebar.
 // ============================================================
 
+export interface SidebarGroup {
+  label: string;
+  pages: PageDefinition[];
+}
+
+export const sidebarGroups: SidebarGroup[] = [
+  {
+    label: 'BR-STW',
+    pages: [
+      shopPage,
+      lockerPage,
+      alertsPage,
+      dupePage,
+      vbucksPage,
+      ghostequipPage,
+      partyPage,
+      xpBoostsPage,
+      mcpPage,
+      stalkPage,
+    ],
+  },
+  {
+    label: 'Automated Systems',
+    pages: [
+      filesPage,
+      taxiPage,
+      autokickPage,
+      statusPage,
+    ],
+  },
+  {
+    label: 'Epic Games',
+    pages: [
+      friendsPage,
+      securityPage,
+      epicStatusPage,
+      eulaPage,
+      redeemCodesPage,
+      accountMgmtPage,
+      authPageDef,
+    ],
+  },
+];
+
+// Flat array for the router — all sidebar pages + settings at the bottom
 export const pages: PageDefinition[] = [
-  alertsPage,
-  friendsPage,
-  lockerPage,
-  shopPage,
-  filesPage,
-  mcpPage,
-  stalkPage,
-  partyPage,
-  ghostequipPage,
-  dupePage,
-  vbucksPage,
-  epicStatusPage,
-  eulaPage,
-  authPageDef,
-  statusPage,
-  taxiPage,
-  securityPage,
-  autokickPage,
-  redeemCodesPage,
-  xpBoostsPage,
+  ...sidebarGroups.flatMap((g) => g.pages),
   settingsPage,
-].sort((a, b) => a.order - b.order);
+];
 
 // Pages accessible via toolbar/buttons but not in the sidebar
 export const hiddenPages: PageDefinition[] = [

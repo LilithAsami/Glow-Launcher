@@ -452,3 +452,38 @@ export async function getVbucks(
     return { success: false, total: 0, error: msg };
   }
 }
+
+export async function getOwnedCosmeticIds(
+  storage: Storage,
+): Promise<{ success: boolean; ownedIds: string[]; error?: string }> {
+  try {
+    const raw = (await storage.get<AccountsData>('accounts')) ?? { tosAccepted: false, accounts: [] };
+    const main = raw.accounts.find((a) => a.isMain) ?? raw.accounts[0];
+    if (!main) return { success: false, ownedIds: [], error: 'No account found' };
+
+    const token = await refreshAccountToken(storage, main.accountId);
+    if (!token) return { success: false, ownedIds: [], error: 'Failed to refresh token' };
+
+    const url = `${Endpoints.MCP}/${main.accountId}/client/QueryProfile?profileId=athena&rvn=-1`;
+
+    const { data } = await authenticatedRequest(storage, main.accountId, token, async (t: string) => {
+      const res = await axios.post(url, {},
+        { headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' }, timeout: 20_000 },
+      );
+      return res.data;
+    });
+
+    const items = data?.profileChanges?.[0]?.profile?.items || {};
+    const ownedIds: string[] = Object.values(items)
+      .map((item: any) => item?.templateId as string | undefined)
+      .filter((tid): tid is string => !!tid && tid.includes(':'))
+      .map((tid) => tid.substring(tid.indexOf(':') + 1).toLowerCase());
+
+    console.log(`[ShopManager] Owned cosmetics: ${ownedIds.length}`);
+    return { success: true, ownedIds };
+  } catch (err: any) {
+    const msg = err?.response?.data?.errorMessage || err?.message || 'Failed';
+    console.error('[ShopManager] getOwnedCosmeticIds failed:', msg);
+    return { success: false, ownedIds: [], error: msg };
+  }
+}

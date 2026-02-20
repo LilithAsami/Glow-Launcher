@@ -94,6 +94,14 @@ contextBridge.exposeInMainWorld('glowAPI', {
       ipcRenderer.invoke('files:save', jsonString, defaultName),
     devBuildStatus: () => ipcRenderer.invoke('files:devbuild-status'),
     devBuildToggle: () => ipcRenderer.invoke('files:devbuild-toggle'),
+    trapHeightList: () => ipcRenderer.invoke('files:trapheight-list'),
+    trapHeightPresets: () => ipcRenderer.invoke('files:trapheight-presets'),
+    trapHeightStatus: (guid: string) => ipcRenderer.invoke('files:trapheight-status', guid),
+    trapHeightApply: (guid: string, newHeight: string) => ipcRenderer.invoke('files:trapheight-apply', guid, newHeight),
+    trapHeightRevert: (guid: string) => ipcRenderer.invoke('files:trapheight-revert', guid),
+    trapHeightRevertAll: () => ipcRenderer.invoke('files:trapheight-revert-all'),
+    trapHeightModifiedCount: () => ipcRenderer.invoke('files:trapheight-modified-count'),
+    trapHeightModifiedTraps: () => ipcRenderer.invoke('files:trapheight-modified-traps'),
   },
   dupe: {
     execute: () => ipcRenderer.invoke('dupe:execute'),
@@ -212,6 +220,7 @@ contextBridge.exposeInMainWorld('glowAPI', {
     toggleGifts: (enable: boolean) => ipcRenderer.invoke('shop:toggle-gifts', enable),
     getFriends: () => ipcRenderer.invoke('shop:get-friends'),
     getVbucks: () => ipcRenderer.invoke('shop:get-vbucks'),
+    getOwned: () => ipcRenderer.invoke('shop:get-owned'),
     onRotated: (cb: () => void) => {
       ipcRenderer.removeAllListeners('shop:rotated');
       ipcRenderer.on('shop:rotated', () => cb());
@@ -226,6 +235,10 @@ contextBridge.exposeInMainWorld('glowAPI', {
     setBanner: (bannerId: string) => ipcRenderer.invoke('ghostequip:set-banner', bannerId),
     setCrowns: (amount: number) => ipcRenderer.invoke('ghostequip:set-crowns', amount),
     setLevel: (level: number) => ipcRenderer.invoke('ghostequip:set-level', level),
+  },
+  accountMgmt: {
+    getInfo: () => ipcRenderer.invoke('accountmgmt:get-info'),
+    updateField: (field: string, value: string) => ipcRenderer.invoke('accountmgmt:update-field', field, value),
   },
   friends: {
     getSummary: () => ipcRenderer.invoke('friends:get-summary'),

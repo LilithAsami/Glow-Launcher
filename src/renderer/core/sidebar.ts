@@ -1,27 +1,39 @@
 import type { PageDefinition } from '../../shared/types';
+import type { SidebarGroup } from '../pages/registry';
 import type { Router } from './router';
 
 /**
- * Builds the sidebar from the page registry.
+ * Builds the sidebar from grouped page registry.
+ * Renders category headers between groups with visual spacing.
  * Pages with position:'bottom' are pushed to the end with a spacer.
  */
-export function initSidebar(pages: PageDefinition[], router: Router): void {
+export function initSidebar(groups: SidebarGroup[], allPages: PageDefinition[], router: Router): void {
   const sidebar = document.getElementById('sidebar');
   if (!sidebar) return;
 
   const nav = document.createElement('nav');
   nav.className = 'sidebar-nav';
 
-  const sorted = [...pages].sort((a, b) => a.order - b.order);
-  const topPages = sorted.filter((p) => p.position !== 'bottom');
-  const bottomPages = sorted.filter((p) => p.position === 'bottom');
+  // Collect bottom pages from allPages (e.g. Settings)
+  const groupPageIds = new Set(groups.flatMap((g) => g.pages.map((p) => p.id)));
+  const bottomPages = allPages.filter((p) => p.position === 'bottom' || !groupPageIds.has(p.id));
 
-  // Top group
-  topPages.forEach((page) => {
-    nav.appendChild(createButton(page, router));
+  // Render groups
+  groups.forEach((group, idx) => {
+    // Group header
+    const header = document.createElement('div');
+    header.className = 'sidebar-group-header';
+    if (idx > 0) header.classList.add('sidebar-group-gap');
+    header.textContent = group.label;
+    nav.appendChild(header);
+
+    // Pages in this group
+    group.pages.forEach((page) => {
+      nav.appendChild(createButton(page, router));
+    });
   });
 
-  // Spacer + bottom group
+  // Spacer + bottom group (Settings etc.)
   if (bottomPages.length > 0) {
     const spacer = document.createElement('div');
     spacer.className = 'sidebar-spacer';
@@ -38,10 +50,9 @@ export function initSidebar(pages: PageDefinition[], router: Router): void {
 
   sidebar.appendChild(nav);
 
-  // Default active state
-  if (sorted.length > 0) {
-    setActive(sorted[0].id);
-  }
+  // Default active state — first page of first group
+  const firstPage = groups[0]?.pages[0];
+  if (firstPage) setActive(firstPage.id);
 
   router.onNavigate(setActive);
 }

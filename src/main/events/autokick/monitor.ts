@@ -6,10 +6,11 @@
  * Flujo:
  * 1. Conexión XMPP a cada cuenta activa
  * 2. Escucha evento PARTY_UPDATED en raw:incoming
- * 3. Al detectar evento → verifica entrada a partida (5s×30)
- * 4. Monitorea completación (polling 1s hasta started === false)
- * 5. Ejecuta acciones configuradas
- * 6.  Polling de respaldo cada 60s por si XMPP falla
+ * 3. Al detectar evento → verifica entrada a partida (party matchmakingState, 5s×30)
+ * 4. Captura baseline de matches_played del MCP campaign
+ * 5. Monitorea completación (polling MCP 5s hasta matches_played > baseline)
+ * 6. Ejecuta acciones configuradas
+ * 7. Polling de respaldo cada 60s por si XMPP falla
  */
 
 import { createClient, Agent } from 'stanza';
@@ -18,7 +19,7 @@ import { BrowserWindow } from 'electron';
 import { Endpoints } from '../../helpers/endpoints';
 import { ANDROID_CLIENT, FORTNITE_CLIENT } from '../../helpers/auth/clients';
 import { refreshAccountToken } from '../../helpers/auth/tokenRefresh';
-import { checkSTWGameStatus, waitForGameStart, waitForMissionComplete } from '../../helpers/autokick/gameVerification';
+import { isInSTWMission, getMCPMatchesPlayed, fetchPartyMeta, waitForMissionComplete } from '../../helpers/autokick/gameVerification';
 import { processSTWRewards } from '../../helpers/autokick/rewardsProcessor';
 import { transferMaterials } from '../../helpers/autokick/materialsTransfer';
 import { PartyManager } from '../../managers/party/PartyManager';
@@ -27,12 +28,10 @@ import type { AccountsData, AutoKickData, AutoKickAccountConfig, AutoKickStatus 
 
 // ⚙️ CONFIGURACIÓN DE TIEMPOS
 const TIMING_CONFIG = {
-  GAME_START_CHECK_INTERVAL: 5000,      // 5s entre checks de entrada
-  GAME_START_MAX_ATTEMPTS: 30,          // 30 intentos (2.5 min total)
-  MISSION_COMPLETE_CHECK_INTERVAL: 1000, // 1s entre checks de completación
-  BACKUP_POLLING_INTERVAL: 60000,       // 60s polling de respaldo: esto sirve por si el xmpp justo se desconecta cuando envia el evento
-  MONITORING_CLEANUP_INTERVAL: 600000,  // 10 min limpieza
-  XMPP_RECONNECT_DELAY: 5000,          // 5s antes de reconectar XMPP
+  MISSION_COMPLETE_CHECK_INTERVAL: 3000,  // 3s entre checks de MCP matches_played
+  BACKUP_POLLING_INTERVAL: 60000,         // 60s polling de respaldo: por si el xmpp se desconecta cuando manda el evento
+  MONITORING_CLEANUP_INTERVAL: 600000,    // 10 min limpieza
+  XMPP_RECONNECT_DELAY: 5000,            // 5s antes de reconectar XMPP
 };
 
 const PARTY_UPDATED_EVENT = 'com.epicgames.social.party.notification.v0.PARTY_UPDATED';
@@ -283,7 +282,7 @@ async function createXMPPConnection(
     }, TIMING_CONFIG.XMPP_RECONNECT_DELAY);
   });
 
-  // ── PARTY_UPDATED listener en raw XML  ──
+  // ── PARTY_UPDATED listener en raw XML ──
   xmpp.on('raw:incoming', (rawXML: string) => {
     if (!rawXML.includes('<body>') || !rawXML.includes(PARTY_UPDATED_EVENT)) return;
     
@@ -292,8 +291,11 @@ async function createXMPPConnection(
       try {
         const parsed = JSON.parse(bodyMatch[1]);
         if (parsed.type === PARTY_UPDATED_EVENT) {
+          // party_state_updated contiene el meta del party directamente desde XMPP
+          // → sin llamada HTTP, igual que Aerial Launcher
+          const partyMeta: Partial<Record<string, string>> = parsed.party_state_updated ?? {};
           console.log(`[XMPP] ${displayName} → PARTY_UPDATED detected`);
-          handlePartyUpdate(storage, accountId, displayName, accountData).catch(() => {});
+          handlePartyUpdate(storage, accountId, displayName, accountData, partyMeta).catch(() => {});
         }
       } catch {}
     }
@@ -346,15 +348,15 @@ function startBackupPolling(storage: Storage, accountId: string, displayName: st
       const token = liveTokens.get(accountId);
       if (!token) return;
 
-      const status = await checkSTWGameStatus(accountId, token, storage);
-      if (status.refreshedToken) liveTokens.set(accountId, status.refreshedToken);
+      // Backup usa HTTP al party endpoint (no hay XMPP push aquí)
+      const partyResult = await fetchPartyMeta(accountId, token, storage);
+      if (partyResult.refreshedToken) liveTokens.set(accountId, partyResult.refreshedToken);
 
-      // Si detecta que está en una partida STW activa, triggerar handlePartyUpdate
-      if (status.isInGame && status.isSTW && status.started === true) {
-        console.log(`[XMPP] ${displayName} → backup polling: detected in-game STW, triggering handler`);
+      if (isInSTWMission(partyResult.meta)) {
+        console.log(`[XMPP] ${displayName} → backup polling: JoiningExistingSession detected, triggering handler`);
         const accountData = await getStoredAccount(accountId);
         if (accountData) {
-          handlePartyUpdate(storage, accountId, displayName, accountData).catch((e) => {
+          handlePartyUpdate(storage, accountId, displayName, accountData, partyResult.meta).catch((e) => {
             console.log(`[XMPP] ${displayName} → backup polling handler error:`, e?.message);
           });
         }
@@ -371,7 +373,8 @@ async function handlePartyUpdate(
   storage: Storage,
   accountId: string,
   displayName: string,
-  accountData: any
+  accountData: any,
+  partyMeta: Partial<Record<string, string>> = {}
 ): Promise<void> {
   // Evitar procesamiento duplicado
   const existing = activeMonitoring.get(accountId);
@@ -403,30 +406,38 @@ async function handlePartyUpdate(
       liveTokens.set(accountId, token);
     }
 
-    send('autokick:log', { accountId, displayName, type: 'info', message: 'Party event detected — checking game...' });
-    console.log(`[XMPP] ${displayName} → waiting for game start...`);
-
-    const gameStartResult = await waitForGameStart(
-      accountId,
-      token,
-      TIMING_CONFIG.GAME_START_MAX_ATTEMPTS,
-      TIMING_CONFIG.GAME_START_CHECK_INTERVAL,
-      storage
-    );
-    
-    if (!gameStartResult.started) {
-      send('autokick:log', { accountId, displayName, type: 'warn', message: 'Game did not start' });
-      console.log(`[XMPP] ${displayName} → game did not start, returning to listen mode`);
+    // ── Leer matchmakingState del meta XMPP directamente (sin HTTP) ────────────────
+    if (!isInSTWMission(partyMeta)) {
+      console.log(`[XMPP] ${displayName} → PARTY_UPDATED but not JoiningExistingSession, ignoring`);
       return;
     }
 
-    const currentToken = gameStartResult.newToken || token;
-    if (gameStartResult.newToken) liveTokens.set(accountId, gameStartResult.newToken);
+    send('autokick:log', { accountId, displayName, type: 'info', message: 'STW mission detected — capturing baseline...' });
+    console.log(`[XMPP] ${displayName} → JoiningExistingSession confirmed, getting matches_played baseline...`);
 
-    send('autokick:log', { accountId, displayName, type: 'info', message: 'STW mission started — waiting for completion...' });
-    console.log(`[XMPP] ${displayName} → in game, waiting for mission complete...`);
+    // ── Capturar baseline de matches_played via MCP ───────────────────────
+    const mcpBaseline = await getMCPMatchesPlayed(accountId, token, storage);
+    if (mcpBaseline.refreshedToken) {
+      token = mcpBaseline.refreshedToken;
+      liveTokens.set(accountId, token);
+    }
+    const matchesPlayedBaseline = mcpBaseline.matchesPlayed;
 
-    const completed = await waitForMissionComplete(accountId, currentToken, storage);
+    send('autokick:log', {
+      accountId, displayName, type: 'info',
+      message: `Mission started (baseline matches_played: ${matchesPlayedBaseline}) — waiting for completion...`,
+    });
+    console.log(`[XMPP] ${displayName} → baseline=${matchesPlayedBaseline}, polling MCP every ${TIMING_CONFIG.MISSION_COMPLETE_CHECK_INTERVAL / 1000}s...`);
+
+    // ── Esperar incremento de matches_played ─────────────────────────────
+    const currentToken = token;
+    const completed = await waitForMissionComplete(
+      accountId,
+      currentToken,
+      storage,
+      matchesPlayedBaseline,
+      TIMING_CONFIG.MISSION_COMPLETE_CHECK_INTERVAL
+    );
     if (!completed) {
       send('autokick:log', { accountId, displayName, type: 'warn', message: 'Mission ended unexpectedly' });
       console.log(`[XMPP] ${displayName} → mission ended unexpectedly`);

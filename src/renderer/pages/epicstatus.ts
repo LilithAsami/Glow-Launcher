@@ -318,7 +318,7 @@ async function fetchStatus(): Promise<void> {
 export const epicStatusPage: PageDefinition = {
   id: 'epicstatus',
   label: 'Epic Status',
-  icon: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>`,
+  icon: `<img src="assets/icons/fnui/EG/eg-status.png" alt="Epic Status" width="18" height="18" style="object-fit:contain;vertical-align:middle" />`,
   order: 21,
   render(container) {
     el = container;

@@ -183,7 +183,7 @@ function getZone(
 
   // PRIORITY 3: Ventures
   const hasVentures = (arr: string[]) =>
-    arr.some((r) => r.toLowerCase().includes('aventura') || r.toLowerCase().includes('phoenix'));
+    arr.some((r) => r.toLowerCase().includes('aventura') || r.toLowerCase().includes('venture'));
   if (hasVentures(rewardNames) || hasVentures(alertNames)) return 'Ventures';
 
   // PRIORITY 4: Geographic zone by power
@@ -317,7 +317,10 @@ function getResourceIcon(itemType: string, translatedName: string): string | nul
         return `assets/icons/stw/resources/reagent_alteration_upgrade_${rarityMatch[1]}.png`;
       }
     }
-    if (tipo.includes('zcp_reagent')) return 'assets/icons/stw/resources/reagent_c_t01.png';
+    if (tipo.includes('reagent_c_t01')) return 'assets/icons/stw/resources/reagent_c_t01.png';
+    if (tipo.includes('reagent_c_t02')) return 'assets/icons/stw/resources/reagent_c_t02.png';
+    if (tipo.includes('reagent_c_t03')) return 'assets/icons/stw/resources/reagent_c_t03.png';
+    if (tipo.includes('reagent_c_t04')) return 'assets/icons/stw/resources/reagent_c_t04.png';
     if (tipo.includes('zcp_heroxp') || tipo.includes('zcp_personnelxp') || tipo.includes('zcp_schematicxp')) {
       return 'assets/icons/stw/resources/heroxp.png';
     }

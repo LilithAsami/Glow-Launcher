@@ -647,7 +647,7 @@ function escAttr(str: string): string {
 export const taxiPage: PageDefinition = {
   id: 'taxi',
   label: 'Taxi',
-  icon: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 17h14v2H5zM2 11l1.5-4.5A2 2 0 0 1 5.4 5h13.2a2 2 0 0 1 1.9 1.5L22 11"/><rect x="2" y="11" width="20" height="6" rx="2"/><circle cx="7" cy="17" r="2"/><circle cx="17" cy="17" r="2"/></svg>`,
+  icon: `<img src="assets/icons/fnui/Automated/taxi.png" alt="Taxi" width="18" height="18" style="object-fit:contain;vertical-align:middle" />`,
   order: 25,
   render(container) {
     el = container;

@@ -22,12 +22,14 @@ import { refreshAccountToken, authenticatedRequest } from './helpers/auth/tokenR
 import { Endpoints } from './helpers/endpoints';
 import { launchGame } from './helpers/cmd/launcher';
 import * as devbuilds from './helpers/cmd/devbuilds';
+import * as trapheight from './helpers/cmd/trapheight';
 import * as dupe from './helpers/cmd/dupe';
 import * as vbucksInfo from './helpers/cmd/vbucks';
 import * as epicstatus from './helpers/epic/epicstatus';
 import * as redeemcodes from './helpers/cmd/redeemcodes';
 import * as xpboosts from './helpers/cmd/xpboosts';
 import * as shop from './managers/shop/ShopManager';
+import * as accountmgmt from './helpers/epic/accountmgmt';
 import type { AutoKickAccountConfig, AccountsData } from '../shared/types';
 
 /**
@@ -326,6 +328,39 @@ export function registerIpcHandlers(storage: Storage): void {
 
   ipcMain.handle('files:devbuild-toggle', async () => {
     return devbuilds.toggleDevBuild(storage);
+  });
+
+  // ── Trap Height Modifier ───────────────────────────────────
+  ipcMain.handle('files:trapheight-list', async () => {
+    return trapheight.getTrapList();
+  });
+
+  ipcMain.handle('files:trapheight-presets', async () => {
+    return trapheight.HEIGHT_PRESETS;
+  });
+
+  ipcMain.handle('files:trapheight-status', async (_e, guid: string) => {
+    return trapheight.getTrapStatus(storage, guid);
+  });
+
+  ipcMain.handle('files:trapheight-apply', async (_e, guid: string, newHeight: string) => {
+    return trapheight.applyTrapHeight(storage, guid, newHeight);
+  });
+
+  ipcMain.handle('files:trapheight-revert', async (_e, guid: string) => {
+    return trapheight.revertTrapHeight(storage, guid);
+  });
+
+  ipcMain.handle('files:trapheight-revert-all', async () => {
+    return trapheight.revertAllTraps(storage);
+  });
+
+  ipcMain.handle('files:trapheight-modified-count', async () => {
+    return trapheight.getModifiedCount(storage);
+  });
+
+  ipcMain.handle('files:trapheight-modified-traps', async () => {
+    return trapheight.getModifiedTraps(storage);
   });
 
   // ── Dupe ───────────────────────────────────────────────────
@@ -801,6 +836,19 @@ export function registerIpcHandlers(storage: Storage): void {
 
   ipcMain.handle('shop:get-vbucks', async () => {
     return shop.getVbucks(storage);
+  });
+
+  ipcMain.handle('shop:get-owned', async () => {
+    return shop.getOwnedCosmeticIds(storage);
+  });
+
+  // ── Account Management ─────────────────────────────────────
+  ipcMain.handle('accountmgmt:get-info', async () => {
+    return accountmgmt.getAccountInfo(storage);
+  });
+
+  ipcMain.handle('accountmgmt:update-field', async (_e, field: string, value: string) => {
+    return accountmgmt.updateAccountField(storage, field, value);
   });
 
   // Init shop refresh timer

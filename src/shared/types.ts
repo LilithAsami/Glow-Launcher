@@ -298,6 +298,14 @@ export interface GlowAPI {
     save: (jsonString: string, defaultName: string) => Promise<{ saved: boolean; path?: string }>;
     devBuildStatus: () => Promise<{ found: boolean; activated: boolean; filePath: string | null; error?: string }>;
     devBuildToggle: () => Promise<{ success: boolean; activated?: boolean; message: string }>;
+    trapHeightList: () => Promise<{ name: string; guid: string; desc: string; defaultHeight: string; rarity: string; tier: string }[]>;
+    trapHeightPresets: () => Promise<{ label: string; hex: string }[]>;
+    trapHeightStatus: (guid: string) => Promise<{ found: boolean; isModified: boolean; currentHeight: string | null; error?: string }>;
+    trapHeightApply: (guid: string, newHeight: string) => Promise<{ success: boolean; message: string; currentHeight?: string; isModified?: boolean }>;
+    trapHeightRevert: (guid: string) => Promise<{ success: boolean; message: string }>;
+    trapHeightRevertAll: () => Promise<{ success: boolean; message: string }>;
+    trapHeightModifiedCount: () => Promise<number>;
+    trapHeightModifiedTraps: () => Promise<{ guid: string; name: string; currentHeight: string; desc: string; rarity: string; tier: string }[]>;
   };
   dupe: {
     execute: () => Promise<{ success: boolean; message: string; storageStatus?: string | null }>;
@@ -488,8 +496,45 @@ export interface GlowAPI {
     toggleGifts: (enable: boolean) => Promise<ShopActionResult>;
     getFriends: () => Promise<{ success: boolean; friends: ShopFriend[]; error?: string }>;
     getVbucks: () => Promise<{ success: boolean; total: number; error?: string }>;
+    getOwned: () => Promise<{ success: boolean; ownedIds: string[]; error?: string }>;
     onRotated: (cb: () => void) => void;
     offRotated: () => void;
+  };
+  accountMgmt: {
+    getInfo: () => Promise<{
+      success: boolean;
+      info?: {
+        displayName: string;
+        email: string;
+        emailVerified: boolean;
+        name: string;
+        lastName: string;
+        preferredLanguage: string;
+        phoneNumber: string;
+        company: string;
+        canUpdateDisplayName: boolean;
+        lastDisplayNameChange: string | null;
+        displayNameAvailableAt: string | null;
+      };
+      error?: string;
+    }>;
+    updateField: (field: string, value: string) => Promise<{
+      success: boolean;
+      info?: {
+        displayName: string;
+        email: string;
+        emailVerified: boolean;
+        name: string;
+        lastName: string;
+        preferredLanguage: string;
+        phoneNumber: string;
+        company: string;
+        canUpdateDisplayName: boolean;
+        lastDisplayNameChange: string | null;
+        displayNameAvailableAt: string | null;
+      };
+      error?: string;
+    }>;
   };
   ghostequip: {
     setOutfit: (cosmeticId: string) => Promise<{ success: boolean; message?: string; error?: string }>;
