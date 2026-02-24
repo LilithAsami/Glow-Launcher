@@ -261,7 +261,7 @@ export async function promotePlayer(storage: Storage, memberId: string) {
 }
 
 /**
- * Toggle party privacy (Private ↔ Public). Auto-reverts after 5 seconds.
+ * Toggle party privacy (Private ↔ Public). Sets to the opposite of current state.
  */
 export async function togglePrivacy(storage: Storage) {
   const { party } = await getTokenAndParty(storage);
@@ -275,6 +275,23 @@ export async function togglePrivacy(storage: Storage) {
   }
 
   const newState = wasPrivate ? 'Public' : 'Private';
+
+  return { success: true, message: `Party set to ${newState}` };
+}
+
+/**
+ * Fix party invite (cloud gaming fix) — toggles privacy and auto-reverts after 5 seconds.
+ */
+export async function fixPartyInvite(storage: Storage) {
+  const { party } = await getTokenAndParty(storage);
+
+  const wasPrivate = party.isPrivate;
+
+  if (wasPrivate) {
+    await party.setPrivacy({ partyType: 'Public', inviteRestriction: 'Anyone', onlyLeaderFriendsCanJoin: false });
+  } else {
+    await party.setPrivacy({ partyType: 'Private', inviteRestriction: 'Leader', onlyLeaderFriendsCanJoin: true });
+  }
 
   // Auto-revert after 5 seconds
   setTimeout(async () => {
@@ -298,14 +315,7 @@ export async function togglePrivacy(storage: Storage) {
     } catch { /* ignore revert errors */ }
   }, 5000);
 
-  return { success: true, message: `Party set to ${newState} (auto-reverting in 5s)` };
-}
-
-/**
- * Fix party invite (cloud gaming fix) — same as toggle privacy.
- */
-export async function fixPartyInvite(storage: Storage) {
-  return togglePrivacy(storage);
+  return { success: true, message: `Party privacy toggled (auto-reverting in 5s)` };
 }
 
 /**

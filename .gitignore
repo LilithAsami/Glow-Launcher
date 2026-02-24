@@ -5,23 +5,3 @@ data/
 *.js.map
 .env
 scripts/
-
-# Test & Debug Files
-_*.js
-confirm.js
-extract_traps.js
-find_guids.js
-find_sections.js
-find_trap.js
-locker.js
-matchmaking.js
-ucas_search.js
-utoc_parse.js
-
-# Test Output Files
-*.csv
-*.json
-!package.json
-!tsconfig.json
-*.txt
-_trap_data.json

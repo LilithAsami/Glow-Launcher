@@ -36,7 +36,7 @@ function draw(): void {
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
             <span>${esc(vbError)}</span>
           </div>
-          <button class="vbucks-btn vbucks-btn--primary" id="vbucks-fetch">
+          <button class="vbucks-btn vbucks-btn--ghost" id="vbucks-fetch">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
             Retry
           </button>
@@ -51,6 +51,9 @@ function draw(): void {
               <span class="vbucks-total-label">Total V-Bucks</span>
               ${vbData.displayName ? `<span class="vbucks-total-account">${esc(vbData.displayName)}</span>` : ''}
             </div>
+            <button class="vbucks-refresh-inline" id="vbucks-refresh" title="Refresh">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+            </button>
           </div>
 
           <!-- Breakdown grid -->
@@ -93,21 +96,10 @@ function draw(): void {
               `).join('')}
             ` : ''}
           </div>
-
-          <button class="vbucks-btn vbucks-btn--ghost" id="vbucks-refresh" title="Refresh">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
-            Refresh
-          </button>
         ` : `
-          <div class="vbucks-empty">
-            <div class="vbucks-empty-icon">
-              <img src="https://fortnite-api.com/images/vbuck.png" alt="V-Bucks" width="48" height="48" />
-            </div>
-            <p>Click below to fetch your V-Bucks breakdown</p>
-            <button class="vbucks-btn vbucks-btn--primary vbucks-btn--large" id="vbucks-fetch">
-              <img src="https://fortnite-api.com/images/vbuck.png" alt="V" width="18" height="18" />
-              Get V-Bucks Info
-            </button>
+          <div class="vbucks-loading">
+            <div class="vbucks-spinner"></div>
+            <span>Loading...</span>
           </div>
         `}
       </div>
@@ -143,10 +135,20 @@ async function fetchVbucks(): Promise<void> {
       vbData = result;
       vbError = null;
     } else {
-      vbError = result.error || 'Failed to get V-Bucks info';
+      const errMsg = result.error || 'Failed to get V-Bucks info';
+      if (errMsg.includes('401') || errMsg.toLowerCase().includes('unauthorized')) {
+        vbError = 'Session expired. Please re-authenticate your account.';
+      } else {
+        vbError = errMsg;
+      }
     }
   } catch (err: any) {
-    vbError = err.message || 'Unexpected error';
+    const errMsg = err.message || 'Unexpected error';
+    if (errMsg.includes('401') || errMsg.toLowerCase().includes('unauthorized')) {
+      vbError = 'Session expired. Please re-authenticate your account.';
+    } else {
+      vbError = errMsg;
+    }
   } finally {
     vbLoading = false;
     draw();
@@ -172,6 +174,7 @@ export const vbucksPage: PageDefinition = {
   render(container) {
     el = container;
     draw();
+    fetchVbucks();
     window.addEventListener('glow:account-switched', onAccountChanged);
   },
   cleanup() {

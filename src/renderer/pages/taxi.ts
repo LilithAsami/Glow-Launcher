@@ -21,7 +21,7 @@ let taxiList: TaxiAccountStatus[] = [];
 let loading = false;
 let logs: TaxiLogEntry[] = [];
 let whitelistSearch: Record<string, string> = {};
-let whitelistResults: Record<string, { accountId: string; displayName: string }[]> = {};
+let whitelistResults: Record<string, { accountId: string; displayName: string; platform?: string }[]> = {};
 let modalAccountId: string | null = null;
 let activatingAccounts = new Set<string>();
 let whitelistModalAccountId: string | null = null;
@@ -344,7 +344,10 @@ function renderWhitelistModal(accountId: string): string {
             <div class="taxi-wl-results">
               ${results.map((r) => `
                 <div class="taxi-wl-result">
-                  <span>${esc(r.displayName)} <small>(${r.accountId.slice(0, 8)}...)</small></span>
+                  <div class="taxi-wl-result-info">
+                    <span>${esc(r.displayName)} <small>(${r.accountId.slice(0, 8)}...)</small></span>
+                    ${r.platform ? `<span class="taxi-wl-platform taxi-wl-platform--${r.platform.toLowerCase()}">${esc(r.platform)}</span>` : ''}
+                  </div>
                   <button class="taxi-btn-small taxi-btn-add" data-wl-add="${accountId}"
                           data-target-id="${r.accountId}" data-target-name="${escAttr(r.displayName)}">Add</button>
                 </div>
@@ -515,6 +518,7 @@ function bindEvents(): void {
             whitelistResults[accId] = res.results.map((r: any) => ({
               accountId: r.accountId,
               displayName: r.displayName,
+              platform: r.platform,
             }));
           }
         } catch {}
@@ -526,6 +530,7 @@ function bindEvents(): void {
             whitelistResults[accId] = res.results.map((r: any) => ({
               accountId: r.accountId,
               displayName: r.displayName,
+              platform: r.platform,
             }));
           }
         } catch {}

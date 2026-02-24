@@ -9,6 +9,10 @@ contextBridge.exposeInMainWorld('glowAPI', {
     set: (key: string, value: unknown) => ipcRenderer.invoke('storage:set', key, value),
     delete: (key: string) => ipcRenderer.invoke('storage:delete', key),
   },
+  settings: {
+    notifyTrayChanged: (enabled: boolean) => ipcRenderer.send('settings:tray-changed', enabled),
+    notifyStartupChanged: (enabled: boolean) => ipcRenderer.send('settings:startup-changed', enabled),
+  },
   window: {
     minimize: () => ipcRenderer.send('window:minimize'),
     maximize: () => ipcRenderer.send('window:maximize'),
@@ -22,6 +26,7 @@ contextBridge.exposeInMainWorld('glowAPI', {
     cancelAuth: () => ipcRenderer.invoke('accounts:cancel-auth'),
     remove: (accountId: string) => ipcRenderer.invoke('accounts:remove', accountId),
     setMain: (accountId: string) => ipcRenderer.invoke('accounts:set-main', accountId),
+    reorder: (orderedIds: string[]) => ipcRenderer.invoke('accounts:reorder', orderedIds),
     getAvatar: (accountId: string) => ipcRenderer.invoke('accounts:get-avatar', accountId),
     getAvatarCached: (accountId: string) => ipcRenderer.invoke('accounts:get-avatar-cached', accountId),
     getAllAvatars: () => ipcRenderer.invoke('accounts:get-all-avatars'),
@@ -83,10 +88,18 @@ contextBridge.exposeInMainWorld('glowAPI', {
     getMissionsForce: () => ipcRenderer.invoke('alerts:get-missions-force'),
   },
   locker: {
-    generate: (filters: { types: string[]; rarities: string[]; chapters: string[]; exclusive: boolean }) =>
+    generate: (filters: { types: string[]; rarities: string[]; chapters: string[]; exclusive: boolean; equippedItemIds?: string[] }) =>
       ipcRenderer.invoke('locker:generate', filters),
     save: (sourcePath: string) =>
       ipcRenderer.invoke('locker:save', sourcePath),
+  },
+  lockermgmt: {
+    getLoadout: () => ipcRenderer.invoke('lockermgmt:get-loadout'),
+    getOwned: () => ipcRenderer.invoke('lockermgmt:get-owned'),
+    getOwnedForSlot: (slotKey: string) => ipcRenderer.invoke('lockermgmt:get-owned-for-slot', slotKey),
+    resolveItems: (itemIds: string[]) => ipcRenderer.invoke('lockermgmt:resolve-items', itemIds),
+    equip: (slotKey: string, itemId: string) => ipcRenderer.invoke('lockermgmt:equip', slotKey, itemId),
+    getCategories: () => ipcRenderer.invoke('lockermgmt:get-categories'),
   },
   files: {
     getWorldInfo: () => ipcRenderer.invoke('files:get-worldinfo'),
@@ -94,6 +107,10 @@ contextBridge.exposeInMainWorld('glowAPI', {
       ipcRenderer.invoke('files:save', jsonString, defaultName),
     devBuildStatus: () => ipcRenderer.invoke('files:devbuild-status'),
     devBuildToggle: () => ipcRenderer.invoke('files:devbuild-toggle'),
+    devStairsStatus: () => ipcRenderer.invoke('files:devstairs-status'),
+    devStairsToggle: () => ipcRenderer.invoke('files:devstairs-toggle'),
+    airStrikeStatus: () => ipcRenderer.invoke('files:airstrike-status'),
+    airStrikeToggle: () => ipcRenderer.invoke('files:airstrike-toggle'),
     trapHeightList: () => ipcRenderer.invoke('files:trapheight-list'),
     trapHeightPresets: () => ipcRenderer.invoke('files:trapheight-presets'),
     trapHeightStatus: (guid: string) => ipcRenderer.invoke('files:trapheight-status', guid),
@@ -102,6 +119,8 @@ contextBridge.exposeInMainWorld('glowAPI', {
     trapHeightRevertAll: () => ipcRenderer.invoke('files:trapheight-revert-all'),
     trapHeightModifiedCount: () => ipcRenderer.invoke('files:trapheight-modified-count'),
     trapHeightModifiedTraps: () => ipcRenderer.invoke('files:trapheight-modified-traps'),
+    trapHeightFamilyInfo: () => ipcRenderer.invoke('files:trapheight-family-info'),
+    trapHeightData: () => ipcRenderer.invoke('files:trapheight-height-data'),
   },
   dupe: {
     execute: () => ipcRenderer.invoke('dupe:execute'),
@@ -250,5 +269,49 @@ contextBridge.exposeInMainWorld('glowAPI', {
     block: (userId: string) => ipcRenderer.invoke('friends:block', userId),
     removeAll: () => ipcRenderer.invoke('friends:remove-all'),
     acceptAll: () => ipcRenderer.invoke('friends:accept-all'),
+  },
+  expeditions: {
+    getStatus: () => ipcRenderer.invoke('expeditions:get-status'),
+    toggle: (accountId: string, active: boolean, rewardTypes?: string[]) =>
+      ipcRenderer.invoke('expeditions:toggle', accountId, active, rewardTypes),
+    updateConfig: (accountId: string, partial: any) =>
+      ipcRenderer.invoke('expeditions:update-config', accountId, partial),
+    runCycle: (accountId: string) => ipcRenderer.invoke('expeditions:run-cycle', accountId),
+    list: (accountId: string) => ipcRenderer.invoke('expeditions:list', accountId),
+    send: (accountId: string, types: string[], amount: number) =>
+      ipcRenderer.invoke('expeditions:send', accountId, types, amount),
+    collect: (accountId: string, expeditionIds?: string[]) =>
+      ipcRenderer.invoke('expeditions:collect', accountId, expeditionIds),
+    abandon: (accountId: string, expeditionIds: string[]) =>
+      ipcRenderer.invoke('expeditions:abandon', accountId, expeditionIds),
+    onLog: (cb: (entry: any) => void) => {
+      ipcRenderer.removeAllListeners('expeditions:log');
+      ipcRenderer.on('expeditions:log', (_e, entry) => cb(entry));
+    },
+    offLog: () => { ipcRenderer.removeAllListeners('expeditions:log'); },
+    onDataChanged: (cb: () => void) => {
+      ipcRenderer.removeAllListeners('expeditions:data-changed');
+      ipcRenderer.on('expeditions:data-changed', () => cb());
+    },
+    offDataChanged: () => { ipcRenderer.removeAllListeners('expeditions:data-changed'); },
+  },
+  quests: {
+    getAll: (lang?: string) => ipcRenderer.invoke('quests:get-all', lang),
+    reroll: (questId: string) => ipcRenderer.invoke('quests:reroll', questId),
+  },
+  autodaily: {
+    getFullStatus: () => ipcRenderer.invoke('autodaily:get-full-status'),
+    toggle: (accountId: string, active: boolean) => ipcRenderer.invoke('autodaily:toggle', accountId, active),
+    runNow: () => ipcRenderer.invoke('autodaily:run-now'),
+    onLog: (cb: (entry: any) => void) => {
+      ipcRenderer.removeAllListeners('autodaily:log');
+      ipcRenderer.on('autodaily:log', (_e, entry) => cb(entry));
+    },
+    offLog: () => { ipcRenderer.removeAllListeners('autodaily:log'); },
+    onDataChanged: (cb: () => void) => {
+      ipcRenderer.removeAllListeners('autodaily:data-changed');
+      ipcRenderer.on('autodaily:data-changed', () => cb());
+    },
+    offDataChanged: () => { ipcRenderer.removeAllListeners('autodaily:data-changed'); },
   },
 });

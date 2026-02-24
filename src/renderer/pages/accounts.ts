@@ -112,7 +112,14 @@ function drawList(): void {
          <p class="empty-subtext">Add your first Epic Games account to get started</p>
        </div>`
     : data.accounts.map((acc) => `
-        <div class="account-card ${acc.isMain ? 'account-card-active' : ''}">
+        <div class="account-card ${acc.isMain ? 'account-card-active' : ''}" draggable="true" data-account-id="${acc.accountId}">
+          <div class="account-drag-handle" title="Drag to reorder">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+              <circle cx="9" cy="6" r="1.5"/><circle cx="15" cy="6" r="1.5"/>
+              <circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/>
+              <circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="18" r="1.5"/>
+            </svg>
+          </div>
           <div class="account-avatar">
             <span class="account-avatar-letter">${acc.displayName.charAt(0).toUpperCase()}</span>
           </div>
@@ -195,6 +202,51 @@ function drawList(): void {
     btn.addEventListener('click', async () => {
       const id = (btn as HTMLElement).dataset.id!;
       data = await window.glowAPI.accounts.remove(id);
+      go('list');
+    });
+  });
+
+  // ── Drag & drop reorder ──────────────────────────────────
+  let dragSrcId: string | null = null;
+
+  el!.querySelectorAll<HTMLElement>('.account-card[draggable]').forEach((card) => {
+    card.addEventListener('dragstart', (e) => {
+      dragSrcId = card.dataset.accountId ?? null;
+      card.classList.add('account-card-dragging');
+      e.dataTransfer!.effectAllowed = 'move';
+    });
+
+    card.addEventListener('dragend', () => {
+      card.classList.remove('account-card-dragging');
+      el!.querySelectorAll('.account-card-dragover').forEach((c) => c.classList.remove('account-card-dragover'));
+    });
+
+    card.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.dataTransfer!.dropEffect = 'move';
+      card.classList.add('account-card-dragover');
+    });
+
+    card.addEventListener('dragleave', () => {
+      card.classList.remove('account-card-dragover');
+    });
+
+    card.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      card.classList.remove('account-card-dragover');
+      const targetId = card.dataset.accountId;
+      if (!dragSrcId || !targetId || dragSrcId === targetId) return;
+
+      // Compute new order
+      const ids = data.accounts.map((a) => a.accountId);
+      const fromIdx = ids.indexOf(dragSrcId);
+      const toIdx = ids.indexOf(targetId);
+      if (fromIdx === -1 || toIdx === -1) return;
+      ids.splice(fromIdx, 1);
+      ids.splice(toIdx, 0, dragSrcId);
+
+      data = await window.glowAPI.accounts.reorder(ids);
+      dragSrcId = null;
       go('list');
     });
   });

@@ -1,5 +1,5 @@
-import { log } from '../../../../helpers/logger';
-import { composeMCP } from '../../../../helpers/epic/utils/mcp';
+import { log } from '../../logger';
+import { composeMCP } from '../../../utils/mcp';
 import { obtenerSquadIdsEnUso, SQUAD_IDS_CONFIG, AVAILABLE_SQUAD_IDS } from '../helpers';
 
 export interface SendExpeditionResult {

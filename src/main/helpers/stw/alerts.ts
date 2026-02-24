@@ -321,13 +321,13 @@ function getResourceIcon(itemType: string, translatedName: string): string | nul
     if (tipo.includes('reagent_c_t02')) return 'assets/icons/stw/resources/reagent_c_t02.png';
     if (tipo.includes('reagent_c_t03')) return 'assets/icons/stw/resources/reagent_c_t03.png';
     if (tipo.includes('reagent_c_t04')) return 'assets/icons/stw/resources/reagent_c_t04.png';
-    if (tipo.includes('zcp_heroxp') || tipo.includes('zcp_personnelxp') || tipo.includes('zcp_schematicxp')) {
-      return 'assets/icons/stw/resources/heroxp.png';
-    }
+    if (tipo.includes('zcp_heroxp')) return 'assets/icons/stw/resources/heroxp.png';
+    if (tipo.includes('zcp_personnelxp')) return 'assets/icons/stw/resources/personnelxp.png';
+    if (tipo.includes('zcp_schematicxp')) return 'assets/icons/stw/resources/schematicxp.png';
     if (tipo.includes('zcp_phoenixxp')) return 'assets/icons/stw/resources/phoenixxp.png';
     return null;
+  
   }
-
   // Token
   if (tipo.includes('token:')) {
     return null;

@@ -2,39 +2,71 @@ import type { PageDefinition } from '../../shared/types';
 import type { SidebarGroup } from '../pages/registry';
 import type { Router } from './router';
 
+/** IDs that can never be hidden from the sidebar */
+const ALWAYS_VISIBLE = new Set(['settings', 'home']);
+
+let _groups: SidebarGroup[] = [];
+let _allPages: PageDefinition[] = [];
+let _router: Router | null = null;
+
 /**
  * Builds the sidebar from grouped page registry.
  * Renders category headers between groups with visual spacing.
  * Pages with position:'bottom' are pushed to the end with a spacer.
+ * Reads hidden pages from storage and skips them.
  */
-export function initSidebar(groups: SidebarGroup[], allPages: PageDefinition[], router: Router): void {
+export async function initSidebar(groups: SidebarGroup[], allPages: PageDefinition[], router: Router): Promise<void> {
+  _groups = groups;
+  _allPages = allPages;
+  _router = router;
+
+  await buildSidebar();
+
+  router.onNavigate(setActive);
+}
+
+/** Rebuild the sidebar (call from settings when toggles change) */
+export async function rebuildSidebar(): Promise<void> {
+  await buildSidebar();
+}
+
+async function buildSidebar(): Promise<void> {
   const sidebar = document.getElementById('sidebar');
   if (!sidebar) return;
+
+  // Load hidden pages from settings
+  const settings = await window.glowAPI.storage.get<{ hiddenPages?: string[] }>('settings');
+  const hiddenSet = new Set((settings?.hiddenPages ?? []).filter((id: string) => !ALWAYS_VISIBLE.has(id)));
+
+  // Remove old nav
+  const oldNav = sidebar.querySelector('.sidebar-nav');
+  if (oldNav) oldNav.remove();
 
   const nav = document.createElement('nav');
   nav.className = 'sidebar-nav';
 
-  // Collect bottom pages from allPages (e.g. Settings)
-  const groupPageIds = new Set(groups.flatMap((g) => g.pages.map((p) => p.id)));
-  const bottomPages = allPages.filter((p) => p.position === 'bottom' || !groupPageIds.has(p.id));
+  const groupPageIds = new Set(_groups.flatMap((g) => g.pages.map((p) => p.id)));
+  const bottomPages = _allPages.filter((p) => p.position === 'bottom' || !groupPageIds.has(p.id));
 
   // Render groups
-  groups.forEach((group, idx) => {
-    // Group header
+  _groups.forEach((group, idx) => {
+    const visiblePages = group.pages.filter((p) => !hiddenSet.has(p.id));
+    if (visiblePages.length === 0) return; // skip empty groups
+
     const header = document.createElement('div');
     header.className = 'sidebar-group-header';
     if (idx > 0) header.classList.add('sidebar-group-gap');
     header.textContent = group.label;
     nav.appendChild(header);
 
-    // Pages in this group
-    group.pages.forEach((page) => {
-      nav.appendChild(createButton(page, router));
+    visiblePages.forEach((page) => {
+      nav.appendChild(createButton(page, _router!));
     });
   });
 
   // Spacer + bottom group (Settings etc.)
-  if (bottomPages.length > 0) {
+  const visibleBottom = bottomPages.filter((p) => !hiddenSet.has(p.id));
+  if (visibleBottom.length > 0) {
     const spacer = document.createElement('div');
     spacer.className = 'sidebar-spacer';
     nav.appendChild(spacer);
@@ -43,18 +75,16 @@ export function initSidebar(groups: SidebarGroup[], allPages: PageDefinition[], 
     sep.className = 'sidebar-separator';
     nav.appendChild(sep);
 
-    bottomPages.forEach((page) => {
-      nav.appendChild(createButton(page, router));
+    visibleBottom.forEach((page) => {
+      nav.appendChild(createButton(page, _router!));
     });
   }
 
   sidebar.appendChild(nav);
 
-  // Default active state — first page of first group
-  const firstPage = groups[0]?.pages[0];
-  if (firstPage) setActive(firstPage.id);
-
-  router.onNavigate(setActive);
+  // Restore active state
+  const currentId = _router?.getCurrentPageId();
+  if (currentId) setActive(currentId);
 }
 
 // ── Helpers ──────────────────────────────────────────────────

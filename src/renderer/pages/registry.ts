@@ -2,6 +2,7 @@ import type { PageDefinition } from '../../shared/types';
 import { accountsPage } from './accounts';
 import { alertsPage } from './alerts';
 import { autokickPage } from './autokick';
+import { expeditionsPage } from './expeditions';
 import { filesPage } from './files';
 import { dupePage } from './dupe';
 import { vbucksPage } from './vbucks';
@@ -22,6 +23,8 @@ import { friendsPage } from './friends';
 import { redeemCodesPage } from './redeemcodes';
 import { xpBoostsPage } from './xpboosts';
 import { accountMgmtPage } from './accountmgmt';
+import { questsPage } from './quests';
+import { autodailyPage } from './autodaily';
 
 // ============================================================
 //  PAGE REGISTRY  (sidebar pages only)
@@ -50,13 +53,14 @@ export const sidebarGroups: SidebarGroup[] = [
       shopPage,
       lockerPage,
       alertsPage,
+      questsPage,
       dupePage,
       vbucksPage,
       ghostequipPage,
       partyPage,
       xpBoostsPage,
       mcpPage,
-      stalkPage,
+      //stalkPage,
     ],
   },
   {
@@ -65,6 +69,8 @@ export const sidebarGroups: SidebarGroup[] = [
       filesPage,
       taxiPage,
       autokickPage,
+      autodailyPage,
+      expeditionsPage,
       statusPage,
     ],
   },

@@ -1,4 +1,4 @@
-import { ipcMain, BrowserWindow, shell, dialog } from 'electron';
+import { ipcMain, BrowserWindow, shell, dialog, app } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
 import type { Storage } from './storage';
@@ -22,14 +22,23 @@ import { refreshAccountToken, authenticatedRequest } from './helpers/auth/tokenR
 import { Endpoints } from './helpers/endpoints';
 import { launchGame } from './helpers/cmd/launcher';
 import * as devbuilds from './helpers/cmd/devbuilds';
+import * as devstairs from './helpers/cmd/devstairs';
+import * as airstrike from './helpers/cmd/airstrike';
 import * as trapheight from './helpers/cmd/trapheight';
 import * as dupe from './helpers/cmd/dupe';
 import * as vbucksInfo from './helpers/cmd/vbucks';
 import * as epicstatus from './helpers/epic/epicstatus';
 import * as redeemcodes from './helpers/cmd/redeemcodes';
 import * as xpboosts from './helpers/cmd/xpboosts';
+import * as quests from './helpers/stw/quests';
+import * as autodaily from './events/autodaily/autodaily';
 import * as shop from './managers/shop/ShopManager';
+import * as lockerMgr from './managers/locker/lockerManager';
 import * as accountmgmt from './helpers/epic/accountmgmt';
+import * as autoExp from './events/expeditions/autoExpeditions';
+import expeditionManager from './managers/expeditions';
+import { getCampaignData } from './managers/expeditions/helpers';
+import guia from './utils/map/guia.json';
 import type { AutoKickAccountConfig, AccountsData } from '../shared/types';
 
 /**
@@ -48,6 +57,15 @@ export function registerIpcHandlers(storage: Storage): void {
 
   ipcMain.handle('storage:delete', async (_e, key: string) => {
     return storage.delete(key);
+  });
+
+  // ── Settings sync (fires app-level events picked up by main/index) ──
+  ipcMain.on('settings:tray-changed', (_e, enabled: boolean) => {
+    (app as any).emit('glow:tray-changed', enabled);
+  });
+
+  ipcMain.on('settings:startup-changed', (_e, enabled: boolean) => {
+    (app as any).emit('glow:startup-changed', enabled);
   });
 
   // ── Window controls ──────────────────────────────────────
@@ -100,6 +118,21 @@ export function registerIpcHandlers(storage: Storage): void {
 
   ipcMain.handle('accounts:set-main', (_e, id: string) => {
     return auth.setMainAccount(storage, id);
+  });
+
+  ipcMain.handle('accounts:reorder', async (_e, orderedIds: string[]) => {
+    const data = await auth.getAccountsData(storage);
+    const map = new Map(data.accounts.map((a) => [a.accountId, a]));
+    const reordered = orderedIds.map((id) => map.get(id)).filter(Boolean) as typeof data.accounts;
+    // Append any accounts that weren't in the ordered list (safety net)
+    for (const acc of data.accounts) {
+      if (!orderedIds.includes(acc.accountId)) reordered.push(acc);
+    }
+    data.accounts = reordered;
+    await storage.set('accounts', data);
+    // Notify renderer so toolbar select updates in real-time
+    BrowserWindow.getAllWindows()[0]?.webContents.send('accounts:data-changed');
+    return data;
   });
 
   // ── Avatar cache ─────────────────────────────────────────
@@ -330,6 +363,24 @@ export function registerIpcHandlers(storage: Storage): void {
     return devbuilds.toggleDevBuild(storage);
   });
 
+  // ── DevStairs ──────────────────────────────────────────────
+  ipcMain.handle('files:devstairs-status', async () => {
+    return devstairs.getDevStairsStatus(storage);
+  });
+
+  ipcMain.handle('files:devstairs-toggle', async () => {
+    return devstairs.toggleDevStairs(storage);
+  });
+
+  // ── AirStrike ──────────────────────────────────────────────
+  ipcMain.handle('files:airstrike-status', async () => {
+    return airstrike.getAirStrikeStatus(storage);
+  });
+
+  ipcMain.handle('files:airstrike-toggle', async () => {
+    return airstrike.toggleAirStrike(storage);
+  });
+
   // ── Trap Height Modifier ───────────────────────────────────
   ipcMain.handle('files:trapheight-list', async () => {
     return trapheight.getTrapList();
@@ -361,6 +412,14 @@ export function registerIpcHandlers(storage: Storage): void {
 
   ipcMain.handle('files:trapheight-modified-traps', async () => {
     return trapheight.getModifiedTraps(storage);
+  });
+
+  ipcMain.handle('files:trapheight-family-info', async () => {
+    return trapheight.getFamilyInfo();
+  });
+
+  ipcMain.handle('files:trapheight-height-data', async () => {
+    return trapheight.getHeightData();
   });
 
   // ── Dupe ───────────────────────────────────────────────────
@@ -446,17 +505,17 @@ export function registerIpcHandlers(storage: Storage): void {
     }
   });
 
-  ipcMain.handle('party:kick-collect', async (_e, force: boolean) => {
+  ipcMain.handle('party:kick-collect', async (_e, _force: boolean) => {
     try {
-      return await party.kickCollect(storage, force);
+      return await party.kickCollect(storage, true);
     } catch (err: any) {
       return { success: false, error: err.message || 'Failed to kick-collect' };
     }
   });
 
-  ipcMain.handle('party:kick-collect-expulse', async (_e, force: boolean) => {
+  ipcMain.handle('party:kick-collect-expulse', async (_e, _force: boolean) => {
     try {
-      return await party.kickCollectExpulse(storage, force);
+      return await party.kickCollectExpulse(storage, true);
     } catch (err: any) {
       return { success: false, error: err.message || 'Failed to kick-collect-expulse' };
     }
@@ -751,7 +810,7 @@ export function registerIpcHandlers(storage: Storage): void {
   });
 
   // ── Locker ─────────────────────────────────────────────────
-  ipcMain.handle('locker:generate', async (_e, filters: { types: string[]; rarities: string[]; chapters: string[]; exclusive: boolean }) => {
+  ipcMain.handle('locker:generate', async (_e, filters: { types: string[]; rarities: string[]; chapters: string[]; exclusive: boolean; equippedItemIds?: string[] }) => {
     const raw = (await storage.get<AccountsData>('accounts')) ?? { tosAccepted: false, accounts: [] };
     const main = raw.accounts.find((a: any) => a.isMain) ?? raw.accounts[0];
     if (!main) throw new Error('No account found');
@@ -760,17 +819,20 @@ export function registerIpcHandlers(storage: Storage): void {
     const token = await refreshAccountToken(storage, main.accountId);
     if (!token) throw new Error('Failed to refresh token');
 
+    const lockerFilters: any = {
+      types: filters.types,
+      rarities: filters.rarities,
+      chapters: filters.chapters,
+      exclusive: filters.exclusive,
+    };
+    if (filters.equippedItemIds) lockerFilters.equippedItemIds = filters.equippedItemIds;
+
     const result = await generateLockerImage({
       accessToken: token,
       accountId: main.accountId,
       type: filters.types,
       displayName: main.displayName || main.accountId,
-      filters: {
-        types: filters.types,
-        rarities: filters.rarities,
-        chapters: filters.chapters,
-        exclusive: filters.exclusive,
-      },
+      filters: lockerFilters,
     });
 
     if (!result.success) {
@@ -783,12 +845,7 @@ export function registerIpcHandlers(storage: Storage): void {
             accountId: main.accountId,
             type: filters.types,
             displayName: main.displayName || main.accountId,
-            filters: {
-              types: filters.types,
-              rarities: filters.rarities,
-              chapters: filters.chapters,
-              exclusive: filters.exclusive,
-            },
+            filters: lockerFilters,
           });
           return retry;
         }
@@ -851,6 +908,189 @@ export function registerIpcHandlers(storage: Storage): void {
     return accountmgmt.updateAccountField(storage, field, value);
   });
 
+  // ── Auto-Expeditions ───────────────────────────────────────
+  ipcMain.handle('expeditions:get-status', async () => {
+    return autoExp.getAutoExpStatus(storage);
+  });
+
+  ipcMain.handle('expeditions:toggle', async (_e, accountId: string, active: boolean, rewardTypes?: string[]) => {
+    return autoExp.toggleAutoExp(storage, accountId, active, rewardTypes);
+  });
+
+  ipcMain.handle('expeditions:update-config', async (_e, accountId: string, partial: any) => {
+    return autoExp.updateAutoExpConfig(storage, accountId, partial);
+  });
+
+  ipcMain.handle('expeditions:run-cycle', async (_e, accountId: string) => {
+    return autoExp.runExpeditionCycle(storage, accountId);
+  });
+
+  // ── Expedition Management (manual actions) ─────────────────
+  ipcMain.handle('expeditions:list', async (_e, accountId: string) => {
+    try {
+      const token = await refreshAccountToken(storage, accountId);
+      if (!token) return { success: false, error: 'Failed to refresh token' };
+
+      const campaignResult = await getCampaignData({ accountId, accessToken: token, forceRefresh: true });
+      if (!campaignResult.success) return { success: false, error: campaignResult.error };
+
+      const data = campaignResult.data;
+      const all = expeditionManager.getExpeditionsFromCampaignData(data);
+      const now = Date.now();
+
+      const available: any[] = [];
+      const sent: any[] = [];
+      const completed: any[] = [];
+
+      for (const exp of all) {
+        const startTime = exp.attributes?.expedition_start_time;
+        const endTime = exp.attributes?.expedition_end_time;
+        const guiaName = (guia as Record<string, string>)[exp.templateId];
+        const entry = {
+          itemId: exp.itemId,
+          templateId: exp.templateId,
+          name: guiaName || exp.name || exp.templateId.replace('Expedition:expedition_', '').replace(/_/g, ' '),
+          rewardType: exp.rewardType || 'Unknown',
+          power: exp.maxTargetPower || exp.power || 0,
+          duration: exp.duration || 0,
+          endTime: endTime || null,
+        };
+
+        if (startTime && endTime) {
+          if (new Date(endTime).getTime() > now) {
+            sent.push({ ...entry, status: 'sent', timeRemaining: expeditionManager.formatTimeRemaining(endTime) });
+          } else {
+            completed.push({ ...entry, status: 'completed', timeRemaining: 'Completed' });
+          }
+        } else {
+          available.push({ ...entry, status: 'available' });
+        }
+      }
+
+      return { success: true, available, sent, completed, slots: { used: sent.length + completed.length, max: 6 } };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('expeditions:send', async (_e, accountId: string, types: string[], amount: number) => {
+    try {
+      const token = await refreshAccountToken(storage, accountId);
+      if (!token) return { success: false, error: 'Failed to refresh token' };
+
+      await expeditionManager.refreshExpeditions({ accountId, accessToken: token });
+
+      const result = await expeditionManager.sendExpeditionsByType({
+        accountId,
+        accessToken: token,
+        expeditionTypes: types,
+        maxExpeditionsToSend: amount,
+      });
+
+      return result;
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('expeditions:collect', async (_e, accountId: string, expeditionIds?: string[]) => {
+    try {
+      const token = await refreshAccountToken(storage, accountId);
+      if (!token) return { success: false, error: 'Failed to refresh token' };
+
+      const campaignResult = await getCampaignData({ accountId, accessToken: token, forceRefresh: true });
+      if (campaignResult.success) {
+        await expeditionManager.claimCollectedResources({ accountId, accessToken: token, campaignData: campaignResult.data });
+      }
+
+      const result = await expeditionManager.collectExpeditions({
+        accountId,
+        accessToken: token,
+        expeditionIds,
+      });
+
+      return result;
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('expeditions:abandon', async (_e, accountId: string, expeditionIds: string[]) => {
+    try {
+      const token = await refreshAccountToken(storage, accountId);
+      if (!token) return { success: false, error: 'Failed to refresh token' };
+
+      const result = await expeditionManager.abandonExpeditions({
+        accountId,
+        accessToken: token,
+        expeditionIds,
+      });
+
+      return result;
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  // ── Quests (STW Dailies) ──────────────────────────────────
+  ipcMain.handle('quests:get-all', async (_e, lang?: string) => {
+    return quests.getQuests(storage, lang ?? 'es');
+  });
+
+  ipcMain.handle('quests:reroll', async (_e, questId: string) => {
+    return quests.rerollQuest(storage, questId);
+  });
+
+  // ── Locker Management ──────────────────────────────────────
+  ipcMain.handle('lockermgmt:get-loadout', async () => {
+    return lockerMgr.getCurrentLoadout(storage);
+  });
+
+  ipcMain.handle('lockermgmt:get-owned', async () => {
+    return lockerMgr.getOwnedCosmetics(storage);
+  });
+
+  ipcMain.handle('lockermgmt:get-owned-for-slot', async (_e, slotKey: string) => {
+    const owned = await lockerMgr.getOwnedCosmetics(storage);
+    const filtered = lockerMgr.filterOwnedForSlot(owned, slotKey);
+    return lockerMgr.resolveMetadata(filtered);
+  });
+
+  ipcMain.handle('lockermgmt:resolve-items', async (_e, itemIds: string[]) => {
+    const results: Record<string, any> = {};
+    for (const id of itemIds) {
+      results[id] = await lockerMgr.resolveSingleItem(id);
+    }
+    return results;
+  });
+
+  ipcMain.handle('lockermgmt:equip', async (_e, slotKey: string, itemId: string) => {
+    return lockerMgr.equipItem(storage, slotKey, itemId);
+  });
+
+  ipcMain.handle('lockermgmt:get-categories', () => {
+    return lockerMgr.SLOT_CATEGORIES;
+  });
+
+  // ── AutoDaily ──────────────────────────────────────────────
+  ipcMain.handle('autodaily:get-full-status', () => {
+    return autodaily.getAutoDailyFullStatus(storage);
+  });
+
+  ipcMain.handle('autodaily:toggle', (_e, accountId: string, active: boolean) => {
+    return autodaily.toggleAutoDaily(storage, accountId, active);
+  });
+
+  ipcMain.handle('autodaily:run-now', () => {
+    return autodaily.runAutoDailyNow(storage);
+  });
+
   // Init shop refresh timer
   shop.initShopRefreshTimer(storage);
+
+  // Init auto-expeditions interval
+  autoExp.startAutoExpeditionsInterval(storage);
+
+  // Init auto-daily scheduler
+  autodaily.startAutoDailyScheduler(storage);
 }

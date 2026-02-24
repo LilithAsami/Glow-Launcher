@@ -234,6 +234,10 @@ export interface GlowAPI {
     set: (key: string, value: unknown) => Promise<void>;
     delete: (key: string) => Promise<void>;
   };
+  settings: {
+    notifyTrayChanged: (enabled: boolean) => void;
+    notifyStartupChanged: (enabled: boolean) => void;
+  };
   window: {
     minimize: () => void;
     maximize: () => void;
@@ -247,6 +251,7 @@ export interface GlowAPI {
     cancelAuth: () => Promise<void>;
     remove: (accountId: string) => Promise<AccountsData>;
     setMain: (accountId: string) => Promise<AccountsData>;
+    reorder: (orderedIds: string[]) => Promise<AccountsData>;
     getAvatar: (accountId: string) => Promise<{ success: boolean; url: string }>;
     getAvatarCached: (accountId: string) => Promise<{ success: boolean; url: string }>;
     getAllAvatars: () => Promise<{ success: boolean; avatars: Record<string, string>; error?: string }>;
@@ -264,6 +269,27 @@ export interface GlowAPI {
     offDataChanged: () => void;
     onLog: (cb: (entry: AutoKickLogEntry) => void) => void;
     offLog: () => void;
+  };
+  expeditions: {
+    getStatus: () => Promise<{ success: boolean; data: any; accounts: any[] }>;
+    toggle: (accountId: string, active: boolean, rewardTypes: string[]) => Promise<any>;
+    updateConfig: (accountId: string, partial: Record<string, unknown>) => Promise<any>;
+    runCycle: (accountId: string) => Promise<any>;
+    list: (accountId: string) => Promise<{
+      success: boolean;
+      available?: any[];
+      sent?: any[];
+      completed?: any[];
+      slots?: { used: number; max: number };
+      error?: string;
+    }>;
+    send: (accountId: string, types: string[], amount: number) => Promise<any>;
+    collect: (accountId: string, expeditionIds?: string[]) => Promise<any>;
+    abandon: (accountId: string, expeditionIds: string[]) => Promise<any>;
+    onLog: (cb: (entry: { accountId: string; displayName: string; type: 'info' | 'success' | 'error' | 'warn'; message: string; timestamp: number }) => void) => void;
+    offLog: () => void;
+    onDataChanged: (cb: () => void) => void;
+    offDataChanged: () => void;
   };
   security: {
     getAccountInfo: () => Promise<SecurityAccountInfo>;
@@ -289,23 +315,37 @@ export interface GlowAPI {
     getMissionsForce: () => Promise<ZoneMissions[]>;
   };
   locker: {
-    generate: (filters: { types: string[]; rarities: string[]; chapters: string[]; exclusive: boolean }) =>
+    generate: (filters: { types: string[]; rarities: string[]; chapters: string[]; exclusive: boolean; equippedItemIds?: string[] }) =>
       Promise<{ success: boolean; fileName?: string; path?: string; count?: number; time?: string; sizeMB?: string; error?: string }>;
     save: (sourcePath: string) => Promise<{ saved: boolean; path?: string }>;
+  };
+  lockermgmt: {
+    getLoadout: () => Promise<{ slots: Record<string, LockerEquippedSlot>; displayName: string }>;
+    getOwned: () => Promise<LockerOwnedCosmetic[]>;
+    getOwnedForSlot: (slotKey: string) => Promise<LockerCosmeticMeta[]>;
+    resolveItems: (itemIds: string[]) => Promise<Record<string, LockerResolvedItem | null>>;
+    equip: (slotKey: string, itemId: string) => Promise<{ success: boolean; error?: string }>;
+    getCategories: () => Promise<LockerSlotCategory[]>;
   };
   files: {
     getWorldInfo: () => Promise<{ success: boolean; data?: any; missions?: number; alerts?: number; theaters?: number; sizeMB?: string; error?: string }>;
     save: (jsonString: string, defaultName: string) => Promise<{ saved: boolean; path?: string }>;
     devBuildStatus: () => Promise<{ found: boolean; activated: boolean; filePath: string | null; error?: string }>;
     devBuildToggle: () => Promise<{ success: boolean; activated?: boolean; message: string }>;
-    trapHeightList: () => Promise<{ name: string; guid: string; desc: string; defaultHeight: string; rarity: string; tier: string }[]>;
-    trapHeightPresets: () => Promise<{ label: string; hex: string }[]>;
+    devStairsStatus: () => Promise<{ found: boolean; activated: boolean; filePath: string | null; error?: string }>;
+    devStairsToggle: () => Promise<{ success: boolean; activated?: boolean; message: string }>;
+    airStrikeStatus: () => Promise<{ found: boolean; activated: boolean; filePath: string | null; error?: string }>;
+    airStrikeToggle: () => Promise<{ success: boolean; activated?: boolean; message: string }>;
+    trapHeightList: () => Promise<{ name: string; guid: string; desc: string; defaultHeight: string; rarity: string; tier: string; family: string; heightSupported: boolean }[]>;
+    trapHeightPresets: () => Promise<{ label: string; hex: string; group: string }[]>;
     trapHeightStatus: (guid: string) => Promise<{ found: boolean; isModified: boolean; currentHeight: string | null; error?: string }>;
     trapHeightApply: (guid: string, newHeight: string) => Promise<{ success: boolean; message: string; currentHeight?: string; isModified?: boolean }>;
     trapHeightRevert: (guid: string) => Promise<{ success: boolean; message: string }>;
     trapHeightRevertAll: () => Promise<{ success: boolean; message: string }>;
     trapHeightModifiedCount: () => Promise<number>;
     trapHeightModifiedTraps: () => Promise<{ guid: string; name: string; currentHeight: string; desc: string; rarity: string; tier: string }[]>;
+    trapHeightFamilyInfo: () => Promise<Record<string, { key: string; category: string; defaultHeight: { hex: string; uu: number }; insideFloor: { hex: string; uu: number } | null; heightSupported: boolean; heightOffset: number }>>;
+    trapHeightData: () => Promise<{ scale: { blocks: string; hex: string; uu: number }[]; named: { key: string; label: string; hex: string; uu: number }[] }>;
   };
   dupe: {
     execute: () => Promise<{ success: boolean; message: string; storageStatus?: string | null }>;
@@ -424,7 +464,8 @@ export interface GlowAPI {
     offDataChanged: () => void;
   };
   taxi: {
-    getAll: () => Promise<{ success: boolean; statuses: TaxiAccountStatus[]; error?: string }>;\n    getAvatars: () => Promise<{ success: boolean; avatars: Record<string, string>; error?: string }>;
+    getAll: () => Promise<{ success: boolean; statuses: TaxiAccountStatus[]; error?: string }>;
+    getAvatars: () => Promise<{ success: boolean; avatars: Record<string, string>; error?: string }>;
     activate: (accountId: string) => Promise<{ success: boolean; error?: string }>;
     deactivate: (accountId: string) => Promise<{ success: boolean; error?: string }>;
     updateConfig: (accountId: string, partial: Partial<TaxiAccountConfig>) => Promise<{ success: boolean }>;
@@ -562,6 +603,107 @@ export interface GlowAPI {
     removeAll: () => Promise<{ success: boolean; message?: string; removed: number; error?: string }>;
     acceptAll: () => Promise<{ success: boolean; message?: string; accepted: number; error?: string }>;
   };
+  quests: {
+    getAll: (lang?: string) => Promise<QuestsResult>;
+    reroll: (questId: string) => Promise<{ success: boolean; error?: string }>;
+  };
+  autodaily: {
+    getFullStatus: () => Promise<{ data: AutoDailyData; accounts: { accountId: string; displayName: string; isActive: boolean; lastCollected?: string }[] }>;
+    toggle: (accountId: string, active: boolean) => Promise<AutoDailyData>;
+    runNow: () => Promise<void>;
+    onLog: (cb: (entry: AutoDailyLogEntry) => void) => void;
+    offLog: () => void;
+    onDataChanged: (cb: () => void) => void;
+    offDataChanged: () => void;
+  };
+}
+
+// ============================================================
+// Quest types
+// ============================================================
+
+export interface QuestObjective {
+  key: string;
+  current: number;
+  max: number | null;
+}
+
+export interface QuestInfo {
+  itemId: string;
+  templateId: string;
+  questKey: string;
+  category: 'Dailies' | 'Wargames' | 'Endurance' | 'Weekly Mythic' | 'Others';
+  name: string;
+  state: string;
+  objectives: QuestObjective[];
+  canReroll: boolean;
+}
+
+export interface QuestsResult {
+  success: boolean;
+  quests?: QuestInfo[];
+  error?: string;
+}
+
+// ============================================================
+// Locker Management types
+// ============================================================
+
+export interface LockerEquippedSlot {
+  slotKey: string;
+  itemId: string | null;
+  customizations: any[];
+  schema: string;
+}
+
+export interface LockerOwnedCosmetic {
+  itemId: string;
+  backendType: string;
+  id: string;
+}
+
+export interface LockerCosmeticMeta {
+  name: string;
+  imageUrl: string | null;
+  rarity: string;
+  series: string | null;
+  backendType: string;
+  id: string;
+  itemId: string;
+  color?: string;
+}
+
+export interface LockerResolvedItem {
+  name: string;
+  imageUrl: string | null;
+  rarity: string;
+  series: string | null;
+  color?: string;
+}
+
+export interface LockerSlotCategory {
+  label: string;
+  slots: string[];
+}
+
+// ============================================================
+// AutoDaily types
+// ============================================================
+
+export interface AutoDailyAccountConfig {
+  isActive: boolean;
+  lastCollected?: string;
+}
+
+export interface AutoDailyData {
+  accounts: Record<string, AutoDailyAccountConfig>;
+}
+
+export interface AutoDailyLogEntry {
+  accountId: string;
+  displayName: string;
+  type: 'info' | 'success' | 'warn' | 'error';
+  message: string;
 }
 
 // ============================================================

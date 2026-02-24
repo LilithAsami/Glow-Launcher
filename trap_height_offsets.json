@@ -1,0 +1,84 @@
+{
+  "_meta": {
+    "description": "GLOW Launcher — Trap Height Binary Patching Reference",
+    "target": "pakchunk11-WindowsClient.ucas (IoStore, uncompressed regions)",
+    "technique": "Find trap GUID as 32-char ASCII in .ucas → patch 2 upper bytes of float32 at GUID_pos - heightOffset",
+    "verified": "2026-02-21 against live Fortnite .ucas binary",
+    "totalFamilies": 31,
+    "totalTraps": 343,
+    "verifiedOffsets": 19,
+    "zeroDefaultFamilies": 10,
+    "problematicFamilies": 2,
+    "heightSupportedFamilies": 5
+  },
+
+  "howItWorks": {
+    "step1": "Search .ucas for 32-char ASCII GUID (e.g. '714D28A34CF939F59429AAB45DDF4796')",
+    "step2": "The height is stored as a float32 (IEEE 754, little-endian) at guidPos - heightOffset - 2 to guidPos - heightOffset + 1",
+    "step3": "We only patch the UPPER 2 bytes at guidPos - heightOffset (bytes [2] and [3] of the float). Lower 2 bytes stay as-is or zeroed.",
+    "step4": "The value in UU (Unreal Units) maps to block height via the heightScale table",
+    "note_supported": "Only 5 families actually change height in-game. The other 26 have Blueprint/C++ overrides that ignore the DataTable value.",
+    "note_revert": "On first access, the REAL bytes from the file are read and stored as 'original'. Reverts write those exact bytes back."
+  },
+
+  "offsetSummary": {
+    "_description": "Per-family heightOffset (bytes before GUID where upper 2 height bytes live)",
+    "offset_13": ["WallDarts"],
+    "offset_14": ["WallLauncher"],
+    "offset_15": ["AntiAir", "DefenderPad", "Broadside", "CeilingGasTrap", "CeilingZapper"],
+    "offset_17": ["FloorLauncher", "CeilingDropTrap", "CeilingElectricAOE"],
+    "offset_18": ["JumpPad"],
+    "offset_19": ["WoodenSpikes"],
+    "offset_20": ["RetractableSpikes"],
+    "offset_21": ["FlameGrill", "FloorFreeze", "TarPit", "Campfire", "HealingPad", "HoverboardCurve", "HoverboardSpeed", "LaunchPad", "OBFloorSpikes", "SoundWall", "WallSpikes", "CeilingSpikes", "TarPitCeiling", "JumpPadFree"],
+    "offset_23": ["WallLights"],
+    "offset_24": ["WallDynamo", "WallWoodSpikes", "Zapomax"]
+  },
+
+  "verificationResults": {
+    "_description": "Verified against live binary 2026-02-21. 'matched' = exact byte match at offset, 'zero_default' = bytes are ~0 (search skipped), 'fixed' = offset works but bytes don't match expected hex",
+    "AntiAir":          { "offset": 15, "status": "matched",       "expectedHex": "70 C1", "actualHex": "70 C1", "actualFloat": -15.0069, "heightSupported": false },
+    "Campfire":         { "offset": 21, "status": "zero_default",  "expectedHex": "00 00", "actualHex": "01 02", "actualFloat": 0.0,      "heightSupported": false },
+    "DefenderPad":      { "offset": 15, "status": "matched",       "expectedHex": "20 C1", "actualHex": "20 C1", "actualFloat": -10.0061, "heightSupported": false },
+    "FlameGrill":       { "offset": 21, "status": "matched",       "expectedHex": "20 C1", "actualHex": "20 C1", "actualFloat": -10.0076, "heightSupported": true },
+    "FloorFreeze":      { "offset": 21, "status": "matched",       "expectedHex": "20 C1", "actualHex": "20 C1", "actualFloat": -10.0078, "heightSupported": true },
+    "FloorLauncher":    { "offset": 17, "status": "matched",       "expectedHex": "70 C1", "actualHex": "70 C1", "actualFloat": -15.0073, "heightSupported": false },
+    "HealingPad":       { "offset": 21, "status": "zero_default",  "expectedHex": "00 00", "actualHex": "08 23", "actualFloat": 0.0,      "heightSupported": false },
+    "HoverboardCurve":  { "offset": 21, "status": "zero_default",  "expectedHex": "00 00", "actualHex": "02 03", "actualFloat": 0.0,      "heightSupported": false },
+    "HoverboardSpeed":  { "offset": 21, "status": "zero_default",  "expectedHex": "00 00", "actualHex": "32 02", "actualFloat": 0.0,      "heightSupported": false },
+    "JumpPad":          { "offset": 18, "status": "matched",       "expectedHex": "20 C1", "actualHex": "20 C1", "actualFloat": -10.0069, "heightSupported": false },
+    "JumpPadFree":      { "offset": 21, "status": "uncertain",     "expectedHex": "20 C1", "actualHex": "93 43", "actualFloat": 294.2117, "heightSupported": false, "_note": "Bytes at offset 21 are clearly NOT height (294 UU). Height not found in 256 bytes. Not supported anyway." },
+    "LaunchPad":        { "offset": 21, "status": "zero_default",  "expectedHex": "00 00", "actualHex": "03 01", "actualFloat": 0.0,      "heightSupported": false },
+    "RetractableSpikes":{ "offset": 20, "status": "matched",       "expectedHex": "20 C1", "actualHex": "20 C1", "actualFloat": -10.0073, "heightSupported": true },
+    "TarPit":           { "offset": 21, "status": "fixed",         "expectedHex": "20 C1", "actualHex": "06 06", "actualFloat": 0.0,      "heightSupported": true, "_note": "Bytes vary between traps. Offset 21 works in-game despite mismatch. Real bytes always read from file." },
+    "WoodenSpikes":     { "offset": 19, "status": "matched",       "expectedHex": "A0 C0", "actualHex": "A0 C0", "actualFloat": -5.0038,  "heightSupported": true },
+    "Broadside":        { "offset": 15, "status": "matched",       "expectedHex": "F0 C1", "actualHex": "F0 C1", "actualFloat": -30.0142, "heightSupported": false },
+    "OBFloorSpikes":    { "offset": 21, "status": "zero_default",  "expectedHex": "00 00", "actualHex": "33 02", "actualFloat": 0.0,      "heightSupported": false },
+    "SoundWall":        { "offset": 21, "status": "zero_default",  "expectedHex": "00 00", "actualHex": "07 26", "actualFloat": 0.0,      "heightSupported": false },
+    "WallDarts":        { "offset": 13, "status": "matched",       "expectedHex": "A0 C1", "actualHex": "A0 C1", "actualFloat": -20.0137, "heightSupported": false },
+    "WallDynamo":       { "offset": 24, "status": "matched",       "expectedHex": "A0 C1", "actualHex": "A0 C1", "actualFloat": -20.0191, "heightSupported": false },
+    "WallLauncher":     { "offset": 14, "status": "matched",       "expectedHex": "A0 C1", "actualHex": "A0 C1", "actualFloat": -20.0151, "heightSupported": false },
+    "WallLights":       { "offset": 23, "status": "matched",       "expectedHex": "A0 C1", "actualHex": "A0 C1", "actualFloat": -20.0171, "heightSupported": false },
+    "WallSpikes":       { "offset": 21, "status": "zero_default",  "expectedHex": "00 00", "actualHex": "01 33", "actualFloat": 0.0,      "heightSupported": false },
+    "WallWoodSpikes":   { "offset": 24, "status": "matched",       "expectedHex": "A0 C1", "actualHex": "A0 C1", "actualFloat": -20.0001, "heightSupported": false },
+    "Zapomax":          { "offset": 24, "status": "matched",       "expectedHex": "A0 C1", "actualHex": "A0 C1", "actualFloat": -20.0205, "heightSupported": false },
+    "CeilingDropTrap":  { "offset": 17, "status": "matched",       "expectedHex": "A0 C1", "actualHex": "A0 C1", "actualFloat": -20.0127, "heightSupported": false },
+    "CeilingElectricAOE":{ "offset": 17, "status": "matched",      "expectedHex": "20 C1", "actualHex": "20 C1", "actualFloat": -10.0056, "heightSupported": false },
+    "CeilingGasTrap":   { "offset": 15, "status": "matched",       "expectedHex": "A0 C1", "actualHex": "A0 C1", "actualFloat": -20.0123, "heightSupported": false },
+    "CeilingSpikes":    { "offset": 21, "status": "zero_default",  "expectedHex": "00 00", "actualHex": "33 02", "actualFloat": 0.0,      "heightSupported": false },
+    "CeilingZapper":    { "offset": 15, "status": "matched",       "expectedHex": "A0 C1", "actualHex": "A0 C1", "actualFloat": -20.0128, "heightSupported": false },
+    "TarPitCeiling":    { "offset": 21, "status": "zero_default",  "expectedHex": "00 00", "actualHex": "02 33", "actualFloat": 0.0,      "heightSupported": false }
+  },
+
+  "heightSupportedDetail": {
+    "_description": "Only these 5 families change height in-game via DataTable patching. The other 26 have their height overridden by Blueprint/C++ code.",
+    "working": {
+      "FlameGrill":       { "offset": 21, "verified": true,  "defaultUU": -10 },
+      "FloorFreeze":      { "offset": 21, "verified": true,  "defaultUU": -10 },
+      "RetractableSpikes":{ "offset": 20, "verified": true,  "defaultUU": -10 },
+      "WoodenSpikes":     { "offset": 19, "verified": true,  "defaultUU": -5  },
+      "TarPit":           { "offset": 21, "verified": true,  "defaultUU": -10, "_note": "Binary bytes don't match expected hex but patching works in-game" }
+    },
+    "notWorking_reason": "26 families: Blueprint actor class (e.g. DVBT_BuildingTrap_Wall_Electric_AOE_C) overrides GridPlacementOffset.Z in PostInitializeComponents/BeginPlay, ignoring DataTable value."
+  }
+}

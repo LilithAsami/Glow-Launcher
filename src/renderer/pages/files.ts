@@ -13,12 +13,30 @@ let devLoading = false;
 let devActivated: boolean | null = null;
 let devError: string | null = null;
 
+// ── DevStairs state ───────────────────────────────────────────
+let dsLoading = false;
+let dsActivated: boolean | null = null;
+let dsError: string | null = null;
+
+// ── AirStrike state ───────────────────────────────────────────
+let airLoading = false;
+let airActivated: boolean | null = null;
+let airError: string | null = null;
+
+
 // ── Trap Height state ─────────────────────────────────────────
-interface TrapListItem { name: string; guid: string; desc: string; defaultHeight: string; rarity: string; tier: string }
-interface TrapPreset { label: string; hex: string }
+interface TrapListItem { name: string; guid: string; desc: string; defaultHeight: string; rarity: string; tier: string; family: string; heightSupported: boolean }
+interface TrapPreset { label: string; hex: string; group: string }
+
+interface FamilyInfo { key: string; category: string; defaultHeight: { hex: string; uu: number }; insideFloor: { hex: string; uu: number } | null; heightSupported: boolean; heightOffset: number }
+interface HeightScale { blocks: string; hex: string; uu: number }
+interface NamedConfig { key: string; label: string; hex: string; uu: number }
 
 let trapList: TrapListItem[] | null = null;
 let trapPresets: TrapPreset[] | null = null;
+let trapFamilyInfo: Record<string, FamilyInfo> | null = null;
+let trapHeightScale: HeightScale[] | null = null;
+let trapNamedConfigs: NamedConfig[] | null = null;
 let trapSelectedFamily: string | null = null;
 let trapSelectedRarity: string | null = null;
 let trapSelectedTier: string | null = null;
@@ -31,6 +49,8 @@ let trapModifiedCount = 0;
 
 interface ModifiedTrap { guid: string; name: string; currentHeight: string; desc: string; rarity: string; tier: string }
 let trapModifiedList: ModifiedTrap[] = [];
+let trapViewMode: 'grid' | 'detail' = 'grid';
+let trapApplyingGuid: string | null = null;
 
 // ─── Helpers ──────────────────────────────────────────────────
 
@@ -50,6 +70,66 @@ function esc(s: string): string {
 
 const RARITY_ORDER = ['C', 'UC', 'R', 'VR', 'SR', '-'];
 const RARITY_LABELS: Record<string, string> = { C: 'Common', UC: 'Uncommon', R: 'Rare', VR: 'Epic', SR: 'Legendary', '-': 'Unique' };
+const RARITY_COLORS: Record<string, string> = { C: '#9e9e9e', UC: '#4caf50', R: '#2196f3', VR: '#9c27b0', SR: '#ff9800', '-': '#607d8b' };
+
+// ─── Trap family icon mapping ─────────────────────────────────
+
+const FAMILY_ICON_MAP: Record<string, string> = {
+  FlameGrill: 'floor_flamegrill', FloorFreeze: 'floor_freeze',
+  RetractableSpikes: 'floor_spikes', WoodenSpikes: 'floor_spikes_wood',
+  TarPit: 'floor_tar', FloorLauncher: 'floor_launcher',
+  LaunchPad: 'floor_player_jump_pad', AntiAir: 'floor_ward',
+  DefenderPad: 'floor_defender', Campfire: 'floor_campfire',
+  HealingPad: 'floor_health', HoverboardCurve: 'floor_hoverboard_speed',
+  HoverboardSpeed: 'floor_hoverboard_speed', JumpPadFree: 'floor_player_jump_pad_free_direction',
+  JumpPad: 'floor_player_jump_pad', Broadside: 'wall_cannons',
+  WallDarts: 'wall_darts', WallDynamo: 'wall_electric',
+  WallLauncher: 'wall_launcher', WallLights: 'wall_light',
+  Zapomax: 'wall_mechstructor', SoundWall: 'wall_speaker',
+  WallWoodSpikes: 'wall_wood_spikes', WallSpikes: 'wall_wood_spikes',
+  OBFloorSpikes: 'floor_spikes', CeilingElectricAOE: 'ceiling_electric_aoe',
+  CeilingZapper: 'ceiling_electric_single', CeilingDropTrap: 'ceiling_falling',
+  CeilingGasTrap: 'ceiling_gas', TarPitCeiling: 'floor_tar',
+  CeilingSpikes: 'ceiling_falling',
+};
+
+const CATEGORY_LABELS: Record<string, string> = { floor: 'Floor Traps', wall: 'Wall Traps', ceiling: 'Ceiling Traps' };
+const CATEGORY_ORDER = ['floor', 'wall', 'ceiling'];
+
+function getFamilyIcon(familyDesc: string): string {
+  const info = trapFamilyInfo?.[familyDesc];
+  const key = info?.key ?? '';
+  const iconFile = FAMILY_ICON_MAP[key] ?? 'floor_spikes';
+  return `assets/icons/stw/traps/${iconFile}.png`;
+}
+
+function getFamiliesByCategory(): Record<string, string[]> {
+  if (!trapFamilyInfo) return {};
+  const result: Record<string, string[]> = { floor: [], wall: [], ceiling: [] };
+  for (const [desc, info] of Object.entries(trapFamilyInfo)) {
+    const cat = info.category || 'floor';
+    if (!result[cat]) result[cat] = [];
+    result[cat].push(desc);
+  }
+  return result;
+}
+
+function getModifiedCountForFamily(familyDesc: string): number {
+  return trapModifiedList.filter(m => m.desc === familyDesc).length;
+}
+
+function getTrapsForFamily(familyDesc: string): TrapListItem[] {
+  if (!trapList) return [];
+  return trapList.filter(t => t.desc === familyDesc);
+}
+
+function sortTraps(traps: TrapListItem[]): TrapListItem[] {
+  return [...traps].sort((a, b) => {
+    const ri = RARITY_ORDER.indexOf(a.rarity) - RARITY_ORDER.indexOf(b.rarity);
+    if (ri !== 0) return ri;
+    return a.tier.localeCompare(b.tier);
+  });
+}
 
 function getTrapFamilies(): string[] {
   if (!trapList) return [];
@@ -79,13 +159,291 @@ function resolveGuid(): string | null {
 }
 
 function heightLabel(hex: string): string {
+  // Try universal presets first, then all family-specific
   const p = trapPresets?.find(pr => pr.hex === hex);
-  return p ? p.label : hex;
+  if (p) return p.label;
+  // Check scale
+  const s = trapHeightScale?.find(sc => sc.hex === hex);
+  if (s) {
+    const n = parseFloat(s.blocks);
+    const sign = n > 0 ? '+' : n < 0 ? '' : ' ';
+    return `${sign}${s.blocks} blocks (${Math.round(s.uu)} UU)`;
+  }
+  // Check named
+  const c = trapNamedConfigs?.find(nc => nc.hex === hex);
+  if (c) return c.label;
+  return hex;
 }
 
 function formatTrapName(m: ModifiedTrap): string {
   const rLabel = RARITY_LABELS[m.rarity] || m.rarity;
   return `${m.desc} — ${rLabel} ${m.tier}`;
+}
+
+const HEIGHT_GROUP_LABELS: Record<string, string> = {
+  scale: 'Block Heights (-1.3 to +1.3)',
+  named: 'Configurations',
+  insideFloor: 'Inside Floor',
+  default: 'Trap Default',
+};
+
+function buildHeightOptions(presets: TrapPreset[], selected: string | null): string {
+  const groups = new Map<string, TrapPreset[]>();
+  for (const p of presets) {
+    const g = p.group || 'other';
+    if (!groups.has(g)) groups.set(g, []);
+    groups.get(g)!.push(p);
+  }
+  let html = '<option value="">— Select height —</option>';
+  for (const [gKey, items] of groups) {
+    html += `<optgroup label="${esc(HEIGHT_GROUP_LABELS[gKey] || gKey)}">`;
+    for (const p of items) {
+      html += `<option value="${p.hex}" ${p.hex === selected ? 'selected' : ''}>${esc(p.label)}</option>`;
+    }
+    html += '</optgroup>';
+  }
+  return html;
+}
+
+/** Build family-aware presets: universal scale + named configs + per-family inside-floor + per-family default */
+function getPresetsForFamily(familyDesc: string | null): TrapPreset[] {
+  const presets: TrapPreset[] = [];
+
+  // 1. Block-height scale (universal)
+  if (trapHeightScale) {
+    for (const s of trapHeightScale) {
+      const n = parseFloat(s.blocks);
+      const sign = n > 0 ? '+' : n < 0 ? '' : ' ';
+      presets.push({ label: `${sign}${s.blocks} blocks (${Math.round(s.uu)} UU)`, hex: s.hex, group: 'scale' });
+    }
+  }
+
+  // 2. Named configurations (universal)
+  if (trapNamedConfigs) {
+    for (const c of trapNamedConfigs) {
+      presets.push({ label: c.label, hex: c.hex, group: 'named' });
+    }
+  }
+
+  // 3. Per-family inside-floor (only for floor traps that have it)
+  if (familyDesc && trapFamilyInfo) {
+    const fam = trapFamilyInfo[familyDesc];
+    if (fam && fam.category === 'floor' && fam.insideFloor) {
+      presets.push({
+        label: `Inside floor (${Math.round(fam.insideFloor.uu)} UU)`,
+        hex: fam.insideFloor.hex,
+        group: 'insideFloor',
+      });
+    }
+  }
+
+  // 4. Per-family default (restore original)
+  if (familyDesc && trapFamilyInfo) {
+    const fam = trapFamilyInfo[familyDesc];
+    if (fam) {
+      presets.push({
+        label: `Restore Default (${Math.round(fam.defaultHeight.uu)} UU)`,
+        hex: fam.defaultHeight.hex,
+        group: 'default',
+      });
+    }
+  }
+
+  return presets;
+}
+
+// ─── Trap Section Renderers ───────────────────────────────────
+
+function renderTrapSection(): string {
+  if (trapViewMode === 'detail' && trapSelectedFamily) return renderTrapDetail();
+  return renderTrapGrid();
+}
+
+function renderTrapGrid(): string {
+  const errorHtml = trapError ? `
+    <div class="files-card-error">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+      <span>${esc(trapError)}</span>
+    </div>` : '';
+
+  const loadingHtml = trapLoading ? `
+    <div class="files-card-loading">
+      <div class="files-spinner"></div>
+      <span>Processing...</span>
+    </div>` : '';
+
+  if (!trapList) {
+    return `
+    <div class="trap-section" id="files-trap-card">
+      <div class="trap-section-header">
+        <div class="trap-section-title-row">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+          </svg>
+          <h3 class="trap-section-title">Trap Height Modifier</h3>
+        </div>
+        <p class="trap-section-desc">Modify trap placement height in pakchunk11. Changes are reversible.</p>
+      </div>
+      ${errorHtml}
+      ${loadingHtml}
+      ${!trapLoading ? `
+      <button class="files-btn files-btn--primary" id="files-trap-load">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        Load Traps
+      </button>` : ''}
+    </div>`;
+  }
+
+  const byCategory = getFamiliesByCategory();
+
+  const categorySections = CATEGORY_ORDER.map(cat => {
+    const families = byCategory[cat] || [];
+    if (families.length === 0) return '';
+    return `
+      <div class="trap-cat">
+        <div class="trap-cat-label">${CATEGORY_LABELS[cat] || cat}</div>
+        <div class="trap-fam-grid">
+          ${families.map(desc => {
+            const modCount = getModifiedCountForFamily(desc);
+            const fi = trapFamilyInfo?.[desc];
+            const unsupported = fi && !fi.heightSupported;
+            return `
+          <button class="trap-fam-btn ${modCount > 0 ? 'trap-fam-btn--modified' : ''} ${unsupported ? 'trap-fam-btn--unsupported' : ''}" data-family="${esc(desc)}">
+            <img class="trap-fam-btn-img" src="${getFamilyIcon(desc)}" alt="" draggable="false" />
+            <span class="trap-fam-btn-name">${esc(desc)}</span>
+            ${modCount > 0 ? `<span class="trap-fam-btn-badge">${modCount}</span>` : ''}
+            ${unsupported ? '<span class="trap-fam-btn-lock"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>' : ''}
+          </button>`;
+          }).join('')}
+        </div>
+      </div>`;
+  }).join('');
+
+  const modifiedSection = trapModifiedList.length > 0 ? `
+    <div class="trap-modified-section">
+      <div class="trap-modified-header">
+        <span class="trap-modified-title">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+          Modified Traps
+          <span class="trap-section-badge">${trapModifiedList.length}</span>
+        </span>
+        <button class="files-btn files-btn--danger files-btn--sm" id="files-trap-revert-all">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+          Revert All
+        </button>
+      </div>
+      <div class="trap-modified-list">
+        ${trapModifiedList.map(m => `
+        <div class="trap-mod-entry" data-guid="${m.guid}">
+          <img class="trap-mod-entry-icon" src="${getFamilyIcon(m.desc)}" alt="" draggable="false" />
+          <div class="trap-mod-entry-info">
+            <span class="trap-mod-entry-name">${esc(formatTrapName(m))}</span>
+            <span class="trap-mod-entry-height">${esc(heightLabel(m.currentHeight))}</span>
+          </div>
+          <button class="files-btn files-btn--danger files-btn--sm trap-grid-revert" data-guid="${m.guid}" title="Revert">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+          </button>
+        </div>`).join('')}
+      </div>
+    </div>` : '';
+
+  return `
+    <div class="trap-section" id="files-trap-card">
+      <div class="trap-section-header">
+        <div class="trap-section-title-row">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+          </svg>
+          <h3 class="trap-section-title">Trap Height Modifier</h3>
+          ${trapModifiedList.length > 0 ? `<span class="trap-section-badge">${trapModifiedList.length}</span>` : ''}
+        </div>
+        <p class="trap-section-desc">Select a trap family to modify placement height. Changes are reversible.</p>
+      </div>
+      ${errorHtml}
+      ${loadingHtml}
+      ${categorySections}
+      ${modifiedSection}
+    </div>`;
+}
+
+function renderTrapDetail(): string {
+  const familyDesc = trapSelectedFamily!;
+  const info = trapFamilyInfo?.[familyDesc];
+  const catLabel = info ? (CATEGORY_LABELS[info.category] || info.category) : '';
+  const defaultHex = info?.defaultHeight.hex ?? '';
+  const defaultLabel = heightLabel(defaultHex);
+  const insideFloor = info?.insideFloor;
+  const traps = sortTraps(getTrapsForFamily(familyDesc));
+  const presets = getPresetsForFamily(familyDesc);
+
+  const metaParts = [catLabel];
+  metaParts.push(`Default: ${defaultLabel}`);
+  if (insideFloor) metaParts.push(`Inside floor: ${Math.round(insideFloor.uu)} UU`);
+
+  const errorHtml = trapError ? `
+    <div class="files-card-error" style="margin:8px 0">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+      <span>${esc(trapError)}</span>
+    </div>` : '';
+
+  const unsupported = info && !info.heightSupported;
+
+  const trapRows = traps.map(trap => {
+    const modified = trapModifiedList.find(m => m.guid === trap.guid);
+    const isModified = !!modified;
+    const rarLabel = RARITY_LABELS[trap.rarity] || trap.rarity;
+    const rarColor = RARITY_COLORS[trap.rarity] || '#9e9e9e';
+    const isApplying = trapApplyingGuid === trap.guid;
+    const controlsDisabled = trapLoading || unsupported;
+
+    return `
+      <div class="trap-item ${isModified ? 'trap-item--modified' : ''} ${isApplying ? 'trap-item--loading' : ''}" data-guid="${trap.guid}">
+        <div class="trap-item-info">
+          <span class="trap-item-rarity" style="--rarity-color:${rarColor}">${esc(rarLabel)}</span>
+          <span class="trap-item-tier">${esc(trap.tier)}</span>
+          ${isModified
+            ? `<span class="files-trap-badge files-trap-badge--modified">MODIFIED</span>
+               <span class="trap-item-height">${esc(heightLabel(modified!.currentHeight))}</span>`
+            : `<span class="files-trap-badge files-trap-badge--default">DEFAULT</span>`
+          }
+        </div>
+        <div class="trap-item-actions">
+          <select class="files-trap-select trap-item-select" data-guid="${trap.guid}" ${controlsDisabled ? 'disabled' : ''}>
+            ${buildHeightOptions(presets, null)}
+          </select>
+          <button class="files-btn files-btn--primary files-btn--sm trap-item-apply" data-guid="${trap.guid}" ${controlsDisabled ? 'disabled' : ''}>
+            ${isApplying ? '<div class="files-spinner" style="width:12px;height:12px"></div>' : 'Apply'}
+          </button>
+          ${isModified ? `
+          <button class="files-btn files-btn--danger files-btn--sm trap-item-revert" data-guid="${trap.guid}" ${controlsDisabled ? 'disabled' : ''}>Revert</button>
+          ` : ''}
+        </div>
+      </div>`;
+  }).join('');
+
+  return `
+    <div class="trap-section trap-detail" id="files-trap-card">
+      <div class="trap-detail-header">
+        <button class="files-btn files-btn--ghost" id="trap-back">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+          Back
+        </button>
+        <img class="trap-detail-img" src="${getFamilyIcon(familyDesc)}" alt="" draggable="false" />
+        <div class="trap-detail-title-area">
+          <h3 class="trap-section-title">${esc(familyDesc)}</h3>
+          <span class="trap-detail-meta">${metaParts.map(esc).join(' · ')}</span>
+        </div>
+      </div>
+      ${info && !info.heightSupported ? `
+      <div class="trap-unsupported-banner">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        <span>This trap family has no modifiable height offset. Patching is not supported.</span>
+      </div>` : ''}
+      ${errorHtml}
+      <div class="trap-detail-list">
+        ${trapRows}
+      </div>
+    </div>`;
 }
 
 // ─── Draw ─────────────────────────────────────────────────────
@@ -170,7 +528,8 @@ function draw(): void {
         </div>
 
         <!-- Dev Builds Card -->
-        <div class="files-card" id="files-devbuilds-card">
+        <div class="files-card files-card--deco" id="files-devbuilds-card">
+          <img src="../assets/icons/devbuilds.png" class="files-card-deco-img" alt="" />
           <div class="files-card-icon ${devActivated ? 'files-card-icon--active' : ''}">
             <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
               <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
@@ -178,7 +537,7 @@ function draw(): void {
           </div>
           <div class="files-card-body">
             <h3 class="files-card-title">Dev Builds</h3>
-            <p class="files-card-desc">Patch pakchunk10 to enable dev build features. Modifies game files directly.</p>
+            <p class="files-card-desc">Patch pakchunk10 to enable dev build features.</p>
 
             ${devLoading ? `
               <div class="files-card-loading">
@@ -219,115 +578,100 @@ function draw(): void {
                 Check Status
               </button>
             `}
+
+            <!-- DevStairs sub-section -->
+            <div class="files-devstairs-section">
+              <h4 class="files-card-subtitle">DevStairs Only</h4>
+              <p class="files-card-desc-sm">Patch pakchunk30 for DevStairs. Auto-deactivates normal Dev Builds when turned on.</p>
+              ${dsLoading ? `
+                <div class="files-card-loading">
+                  <div class="files-spinner"></div>
+                  <span>Patching...</span>
+                </div>
+              ` : dsError ? `
+                <div class="files-card-error">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+                  <span>${esc(dsError)}</span>
+                </div>
+                <button class="files-btn files-btn--primary files-btn--sm" id="files-devstairs-toggle">Retry</button>
+              ` : dsActivated !== null ? `
+                <div class="files-devbuilds-status">
+                  <span class="files-devbuilds-badge ${dsActivated ? 'files-devbuilds-badge--on' : 'files-devbuilds-badge--off'}">
+                    ${dsActivated ? 'ACTIVATED' : 'DEACTIVATED'}
+                  </span>
+                </div>
+                <div class="files-card-actions">
+                  <button class="files-btn files-btn--sm ${dsActivated ? 'files-btn--danger' : 'files-btn--primary'}" id="files-devstairs-toggle">
+                    ${dsActivated ? 'Deactivate' : 'Activate'}
+                  </button>
+                  <button class="files-btn files-btn--ghost files-btn--sm" id="files-devstairs-check" title="Re-check status">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+                  </button>
+                </div>
+              ` : `
+                <button class="files-btn files-btn--primary files-btn--sm" id="files-devstairs-check">Check Status</button>
+              `}
+            </div>
           </div>
         </div>
 
-        <!-- Trap Height Modifier Card -->
-        <div class="files-card files-card--tall" id="files-trap-card">
-          <div class="files-card-icon ${trapModifiedCount > 0 ? 'files-card-icon--active' : ''}">
+        <!-- AirStrike Card -->
+        <div class="files-card files-card--deco" id="files-airstrike-card">
+          <img src="../assets/icons/airstrike.png" class="files-card-deco-img" alt="" />
+          <div class="files-card-icon ${airActivated ? 'files-card-icon--active' : ''}">
             <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+              <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
             </svg>
           </div>
           <div class="files-card-body">
-            <h3 class="files-card-title">Trap Height Modifier</h3>
-            <p class="files-card-desc">Modify trap placement height in pakchunk11. Changes are reversible.</p>
+            <h3 class="files-card-title">AirStrike</h3>
+            <p class="files-card-desc">Patch pakchunk30 to enable AirStrike exploit.</p>
 
-            ${trapError ? `
-              <div class="files-card-error">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
-                <span>${esc(trapError)}</span>
-              </div>
-            ` : ''}
-
-            ${trapLoading ? `
+            ${airLoading ? `
               <div class="files-card-loading">
                 <div class="files-spinner"></div>
-                <span>Processing...</span>
+                <span>Patching file...</span>
               </div>
-            ` : trapList ? `
-              <div class="files-trap-selectors">
-                <div class="files-trap-row">
-                  <label class="files-trap-label">Trap</label>
-                  <select class="files-trap-select" id="files-trap-family">
-                    <option value="">— Select trap —</option>
-                    ${getTrapFamilies().map(f => `<option value="${esc(f)}" ${f === trapSelectedFamily ? 'selected' : ''}>${esc(f)}</option>`).join('')}
-                  </select>
-                </div>
-
-                ${trapSelectedFamily ? `
-                <div class="files-trap-row">
-                  <label class="files-trap-label">Rarity</label>
-                  <select class="files-trap-select" id="files-trap-rarity">
-                    <option value="">— Select rarity —</option>
-                    ${getTrapRarities().map(r => `<option value="${r}" ${r === trapSelectedRarity ? 'selected' : ''}>${esc(RARITY_LABELS[r] || r)}</option>`).join('')}
-                  </select>
-                </div>
-                ` : ''}
-
-                ${trapSelectedRarity ? `
-                <div class="files-trap-row">
-                  <label class="files-trap-label">Tier</label>
-                  <select class="files-trap-select" id="files-trap-tier">
-                    <option value="">— Select tier —</option>
-                    ${getTrapTiers().map(t => `<option value="${t}" ${t === trapSelectedTier ? 'selected' : ''}>${t}</option>`).join('')}
-                  </select>
-                </div>
-                ` : ''}
-
-                <div class="files-trap-row">
-                  <label class="files-trap-label">Height</label>
-                  <select class="files-trap-select" id="files-trap-height" ${!trapSelectedGuid ? 'disabled' : ''}>
-                    <option value="">— Select height —</option>
-                    ${(trapPresets ?? []).map(p => `<option value="${p.hex}" ${p.hex === trapSelectedHeight ? 'selected' : ''}>${esc(p.label)}</option>`).join('')}
-                  </select>
-                </div>
+            ` : airError ? `
+              <div class="files-card-error">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+                <span>${esc(airError)}</span>
               </div>
-
+              <button class="files-btn files-btn--primary" id="files-airstrike-toggle">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+                Retry
+              </button>
+            ` : airActivated !== null ? `
+              <div class="files-devbuilds-status">
+                <span class="files-devbuilds-badge ${airActivated ? 'files-devbuilds-badge--on' : 'files-devbuilds-badge--off'}">
+                  ${airActivated ? 'ACTIVATED' : 'DEACTIVATED'}
+                </span>
+              </div>
               <div class="files-card-actions">
-                <button class="files-btn files-btn--primary" id="files-trap-apply" ${!(trapSelectedGuid && trapSelectedHeight) ? 'disabled' : ''}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
-                  Apply
+                <button class="files-btn ${airActivated ? 'files-btn--danger' : 'files-btn--primary'}" id="files-airstrike-toggle">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    ${airActivated
+                      ? '<path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/>'
+                      : '<polygon points="5 3 19 12 5 21 5 3"/>'}
+                  </svg>
+                  ${airActivated ? 'Deactivate' : 'Activate'}
+                </button>
+                <button class="files-btn files-btn--ghost" id="files-airstrike-check" title="Re-check status">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
                 </button>
               </div>
-
-              ${trapModifiedList.length > 0 ? `
-              <div class="files-trap-modified">
-                <div class="files-trap-modified-header">
-                  <span class="files-trap-modified-title">Modified Traps</span>
-                  <button class="files-btn files-btn--danger files-btn--sm" id="files-trap-revert-all">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
-                    Revert All <span class="files-trap-count">${trapModifiedList.length}</span>
-                  </button>
-                </div>
-                ${trapModifiedList.map(m => `
-                <div class="files-trap-entry" data-guid="${m.guid}">
-                  <div class="files-trap-entry-info">
-                    <span class="files-trap-entry-name">${esc(formatTrapName(m))}</span>
-                    <span class="files-trap-entry-height">${esc(heightLabel(m.currentHeight))}</span>
-                  </div>
-                  <div class="files-trap-entry-actions">
-                    <span class="files-devbuilds-badge files-devbuilds-badge--on">ACTIVATED</span>
-                    <button class="files-btn files-btn--danger files-btn--sm files-trap-deactivate" data-guid="${m.guid}" title="Deactivate">
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/>
-                      </svg>
-                      Deactivate
-                    </button>
-                  </div>
-                </div>
-                `).join('')}
-              </div>
-              ` : ''}
             ` : `
-              <button class="files-btn files-btn--primary" id="files-trap-load">
+              <button class="files-btn files-btn--primary" id="files-airstrike-check">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-                Load Traps
+                Check Status
               </button>
             `}
           </div>
         </div>
+
       </div>
+
+      ${renderTrapSection()}
     </div>
 
     <!-- JSON Preview Modal -->
@@ -379,74 +723,70 @@ function bindEvents(): void {
   const devToggleBtn = el.querySelector('#files-devbuilds-toggle') as HTMLButtonElement | null;
   devToggleBtn?.addEventListener('click', () => toggleDevBuilds());
 
+  // ── DevStairs ────────────────────────────────────────────
+  const dsCheckBtn = el.querySelector('#files-devstairs-check') as HTMLButtonElement | null;
+  dsCheckBtn?.addEventListener('click', () => checkDevStairsStatus());
+
+  const dsToggleBtn = el.querySelector('#files-devstairs-toggle') as HTMLButtonElement | null;
+  dsToggleBtn?.addEventListener('click', () => toggleDevStairs());
+
+  // ── AirStrike ────────────────────────────────────────────
+  const airCheckBtn = el.querySelector('#files-airstrike-check') as HTMLButtonElement | null;
+  airCheckBtn?.addEventListener('click', () => checkAirStrikeStatus());
+
+  const airToggleBtn = el.querySelector('#files-airstrike-toggle') as HTMLButtonElement | null;
+  airToggleBtn?.addEventListener('click', () => toggleAirStrike());
+
   // ── Trap Height ──────────────────────────────────────────
   const trapLoadBtn = el.querySelector('#files-trap-load') as HTMLButtonElement | null;
   trapLoadBtn?.addEventListener('click', () => loadTraps());
 
-  const trapFamilySel = el.querySelector('#files-trap-family') as HTMLSelectElement | null;
-  trapFamilySel?.addEventListener('change', () => {
-    trapSelectedFamily = trapFamilySel.value || null;
-    trapSelectedRarity = null;
-    trapSelectedTier = null;
-    trapSelectedGuid = null;
-    trapSelectedHeight = null;
-    trapStatus = null;
-    // Auto-select if only one rarity
-    const rarities = getTrapRarities();
-    if (rarities.length === 1) {
-      trapSelectedRarity = rarities[0];
-      const tiers = getTrapTiers();
-      if (tiers.length === 1) {
-        trapSelectedTier = tiers[0];
-        trapSelectedGuid = resolveGuid();
+  // Family grid buttons
+  el.querySelectorAll('.trap-fam-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const desc = (btn as HTMLElement).dataset.family;
+      if (desc) {
+        trapSelectedFamily = desc;
+        trapViewMode = 'detail';
+        trapError = null;
+        draw();
       }
-    }
+    });
+  });
+
+  // Back button from detail view
+  const trapBackBtn = el.querySelector('#trap-back') as HTMLButtonElement | null;
+  trapBackBtn?.addEventListener('click', () => {
+    trapViewMode = 'grid';
+    trapSelectedFamily = null;
+    trapError = null;
     draw();
   });
 
-  const trapRaritySel = el.querySelector('#files-trap-rarity') as HTMLSelectElement | null;
-  trapRaritySel?.addEventListener('change', () => {
-    trapSelectedRarity = trapRaritySel.value || null;
-    trapSelectedTier = null;
-    trapSelectedGuid = null;
-    trapSelectedHeight = null;
-    trapStatus = null;
-    // Auto-select if only one tier
-    const tiers = getTrapTiers();
-    if (tiers.length === 1) {
-      trapSelectedTier = tiers[0];
-      trapSelectedGuid = resolveGuid();
-    }
-    draw();
+  // Per-trap apply buttons
+  el.querySelectorAll('.trap-item-apply').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const guid = (btn as HTMLElement).dataset.guid;
+      const select = el?.querySelector(`.trap-item-select[data-guid="${guid}"]`) as HTMLSelectElement | null;
+      const hex = select?.value;
+      if (guid && hex) applyTrapByGuid(guid, hex);
+    });
   });
 
-  const trapTierSel = el.querySelector('#files-trap-tier') as HTMLSelectElement | null;
-  trapTierSel?.addEventListener('change', () => {
-    trapSelectedTier = trapTierSel.value || null;
-    trapSelectedGuid = resolveGuid();
-    trapSelectedHeight = null;
-    trapStatus = null;
-    draw();
+  // Per-trap revert buttons (in detail view)
+  el.querySelectorAll('.trap-item-revert').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const guid = (btn as HTMLElement).dataset.guid;
+      if (guid) revertSingleTrap(guid);
+    });
   });
 
-  const trapHeightSel = el.querySelector('#files-trap-height') as HTMLSelectElement | null;
-  trapHeightSel?.addEventListener('change', () => {
-    trapSelectedHeight = trapHeightSel.value || null;
-    // Update Apply button state without full redraw
-    const applyBtn = el?.querySelector('#files-trap-apply') as HTMLButtonElement | null;
-    if (applyBtn) {
-      applyBtn.disabled = !(trapSelectedGuid && trapSelectedHeight);
-    }
-  });
-
-  const trapApplyBtn = el.querySelector('#files-trap-apply') as HTMLButtonElement | null;
-  trapApplyBtn?.addEventListener('click', () => applyTrap());
-
+  // Revert all button
   const trapRevertAllBtn = el.querySelector('#files-trap-revert-all') as HTMLButtonElement | null;
   trapRevertAllBtn?.addEventListener('click', () => revertAllTraps());
 
-  // Deactivate buttons on individual modified trap entries
-  el.querySelectorAll('.files-trap-deactivate').forEach(btn => {
+  // Revert buttons in grid modified list
+  el.querySelectorAll('.trap-grid-revert').forEach(btn => {
     btn.addEventListener('click', () => {
       const guid = (btn as HTMLElement).dataset.guid;
       if (guid) revertSingleTrap(guid);
@@ -594,6 +934,104 @@ async function toggleDevBuilds(): Promise<void> {
   }
 }
 
+// ─── DevStairs Actions ────────────────────────────────────────
+
+async function checkDevStairsStatus(): Promise<void> {
+  if (dsLoading) return;
+  dsLoading = true;
+  dsError = null;
+  draw();
+
+  try {
+    const result = await window.glowAPI.files.devStairsStatus();
+    if (result.found) {
+      dsActivated = result.activated;
+      dsError = null;
+    } else {
+      dsError = result.error || 'File not found';
+      dsActivated = null;
+    }
+  } catch (err: any) {
+    dsError = err.message || 'Error checking status';
+  } finally {
+    dsLoading = false;
+    draw();
+  }
+}
+
+async function toggleDevStairs(): Promise<void> {
+  if (dsLoading) return;
+  dsLoading = true;
+  dsError = null;
+  draw();
+
+  try {
+    const result = await window.glowAPI.files.devStairsToggle();
+    if (result.success) {
+      dsActivated = result.activated ?? null;
+      dsError = null;
+      // DevStairs auto-deactivates normal devbuilds — refresh its status
+      if (result.activated) {
+        devActivated = false;
+      }
+    } else {
+      dsError = result.message;
+    }
+  } catch (err: any) {
+    dsError = err.message || 'Unexpected error';
+  } finally {
+    dsLoading = false;
+    draw();
+  }
+}
+
+// ─── AirStrike Actions ───────────────────────────────────────
+
+async function checkAirStrikeStatus(): Promise<void> {
+  if (airLoading) return;
+  airLoading = true;
+  airError = null;
+  draw();
+
+  try {
+    const result = await window.glowAPI.files.airStrikeStatus();
+    if (result.found) {
+      airActivated = result.activated;
+      airError = null;
+    } else {
+      airError = result.error || 'File not found';
+      airActivated = null;
+    }
+  } catch (err: any) {
+    airError = err.message || 'Error checking status';
+  } finally {
+    airLoading = false;
+    draw();
+  }
+}
+
+async function toggleAirStrike(): Promise<void> {
+  if (airLoading) return;
+  airLoading = true;
+  airError = null;
+  draw();
+
+  try {
+    const result = await window.glowAPI.files.airStrikeToggle();
+    if (result.success) {
+      airActivated = result.activated ?? null;
+      airError = null;
+    } else {
+      airError = result.message;
+    }
+  } catch (err: any) {
+    airError = err.message || 'Unexpected error';
+  } finally {
+    airLoading = false;
+    draw();
+  }
+}
+
 // ─── Trap Height Actions ──────────────────────────────────────
 
 async function loadTraps(): Promise<void> {
@@ -603,15 +1041,20 @@ async function loadTraps(): Promise<void> {
   draw();
 
   try {
-    const [list, presets, modTraps] = await Promise.all([
+    const [list, presets, modTraps, familyInfo, heightData] = await Promise.all([
       window.glowAPI.files.trapHeightList(),
       window.glowAPI.files.trapHeightPresets(),
       window.glowAPI.files.trapHeightModifiedTraps(),
+      window.glowAPI.files.trapHeightFamilyInfo(),
+      window.glowAPI.files.trapHeightData(),
     ]);
     trapList = list;
     trapPresets = presets;
     trapModifiedList = modTraps;
     trapModifiedCount = modTraps.length;
+    trapFamilyInfo = familyInfo;
+    trapHeightScale = heightData.scale;
+    trapNamedConfigs = heightData.named;
     trapError = null;
   } catch (err: any) {
     trapError = err.message || 'Failed to load trap data';
@@ -626,6 +1069,30 @@ async function refreshModifiedList(): Promise<void> {
     trapModifiedList = await window.glowAPI.files.trapHeightModifiedTraps();
     trapModifiedCount = trapModifiedList.length;
   } catch { /* ignore */ }
+}
+
+async function applyTrapByGuid(guid: string, hex: string): Promise<void> {
+  if (trapLoading) return;
+  trapApplyingGuid = guid;
+  trapLoading = true;
+  trapError = null;
+  draw();
+
+  try {
+    const result = await window.glowAPI.files.trapHeightApply(guid, hex);
+    if (result.success) {
+      trapError = null;
+      await refreshModifiedList();
+    } else {
+      trapError = result.message;
+    }
+  } catch (err: any) {
+    trapError = err.message || 'Unexpected error';
+  } finally {
+    trapApplyingGuid = null;
+    trapLoading = false;
+    draw();
+  }
 }
 
 async function applyTrap(): Promise<void> {
@@ -694,6 +1161,7 @@ async function revertAllTraps(): Promise<void> {
       trapSelectedGuid = null;
       trapSelectedHeight = null;
       trapStatus = null;
+      trapViewMode = 'grid';
       trapModifiedList = [];
       trapModifiedCount = 0;
       trapError = null;

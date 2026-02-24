@@ -1,8 +1,8 @@
 {
   "name": "glow-launcher",
-  "version": "0.1.0",
+  "version": "1.4.0",
   "author": "STWJXSX",
-  "description": "GLOW Launcher — Minimalist Desktop Launcher",
+  "description": "GLOW Launcher — Desktop Launcher",
   "main": "dist/main/index.js",
   "scripts": {
     "build": "node scripts/build.js",
@@ -49,6 +49,7 @@
     "electron": "^28.1.0",
     "electron-builder": "^24.9.1",
     "esbuild": "^0.19.11",
+    "farmhash": "^5.0.1",
     "typescript": "^5.3.3"
   },
   "dependencies": {
@@ -56,6 +57,7 @@
     "axios": "^1.6.0",
     "discord.js": "^14.25.1",
     "fnbr": "^4.1.2",
+    "koffi": "^2.15.1",
     "sharp": "^0.34.5",
     "stanza": "^12.21.1"
   }

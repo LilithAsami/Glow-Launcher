@@ -1,22 +1,58 @@
 import type { PageDefinition } from '../../shared/types';
+import { sidebarGroups } from './registry';
+import { rebuildSidebar } from '../core/sidebar';
 
-let el: HTMLElement | null = null;
-let fortnitePath = 'C:\\Program Files\\Epic Games\\Fortnite';
-
-async function loadSettings(): Promise<void> {
-  const settings = await window.glowAPI.storage.get<{ fortnitePath?: string }>('settings');
-  fortnitePath = settings?.fortnitePath || 'C:\\Program Files\\Epic Games\\Fortnite';
+interface SettingsData {
+  fortnitePath?: string;
+  hiddenPages?: string[];
+  minimizeToTray?: boolean;
+  launchOnStartup?: boolean;
 }
 
-async function saveFortnitePath(newPath: string): Promise<void> {
-  fortnitePath = newPath;
-  const settings = (await window.glowAPI.storage.get<Record<string, unknown>>('settings')) ?? {};
-  settings.fortnitePath = newPath;
+/** IDs that the user cannot disable */
+const ALWAYS_VISIBLE = new Set(['settings', 'home']);
+
+let el: HTMLElement | null = null;
+let settings: SettingsData = {};
+
+async function loadSettings(): Promise<void> {
+  settings = (await window.glowAPI.storage.get<SettingsData>('settings')) ?? {};
+  if (!settings.fortnitePath) settings.fortnitePath = 'C:\\Program Files\\Epic Games\\Fortnite';
+}
+
+async function saveSettings(): Promise<void> {
   await window.glowAPI.storage.set('settings', settings);
 }
 
 function draw(): void {
   if (!el) return;
+
+  // Build sidebar toggle rows with groups
+  const allSidebarPages = sidebarGroups.flatMap((g) =>
+    g.pages.map((p) => ({ id: p.id, label: p.label, group: g.label }))
+  );
+  const hiddenSet = new Set(settings.hiddenPages ?? []);
+
+  const toggleRows = sidebarGroups.map((group) => {
+    const groupPages = group.pages.filter((p) => !ALWAYS_VISIBLE.has(p.id));
+    if (groupPages.length === 0) return '';
+    return `
+      <div class="settings-toggle-group-label">${group.label}</div>
+      ${groupPages.map((p) => `
+        <div class="settings-item">
+          <div class="settings-item-info">
+            <span class="settings-item-label">${p.label}</span>
+          </div>
+          <label class="settings-toggle">
+            <input type="checkbox" class="settings-toggle-input" data-page-id="${p.id}"
+              ${!hiddenSet.has(p.id) ? 'checked' : ''} />
+            <span class="settings-toggle-slider"></span>
+          </label>
+        </div>
+      `).join('')}
+    `;
+  }).join('');
+
   el.innerHTML = `
     <div class="page-settings">
       <h1 class="page-title">Settings</h1>
@@ -24,7 +60,6 @@ function draw(): void {
 
       <div class="settings-section">
         <h2 class="settings-section-title">Game</h2>
-
         <div class="settings-item settings-item-stacked">
           <div class="settings-item-info">
             <span class="settings-item-label">Fortnite Installation Path</span>
@@ -32,7 +67,7 @@ function draw(): void {
           </div>
           <div class="settings-path-row">
             <input type="text" class="settings-path-input" id="fortnite-path-input"
-              value="${fortnitePath.replace(/"/g, '&quot;')}" spellcheck="false" />
+              value="${(settings.fortnitePath ?? '').replace(/"/g, '&quot;')}" spellcheck="false" />
             <button class="settings-path-btn" id="fortnite-path-browse" title="Browse...">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -42,6 +77,40 @@ function draw(): void {
             </button>
           </div>
         </div>
+      </div>
+
+      <div class="settings-section">
+        <h2 class="settings-section-title">Behavior</h2>
+
+        <div class="settings-item">
+          <div class="settings-item-info">
+            <span class="settings-item-label">Minimize to Tray</span>
+            <span class="settings-item-desc">When closing the window, hide to system tray instead of quitting</span>
+          </div>
+          <label class="settings-toggle">
+            <input type="checkbox" class="settings-toggle-input" id="toggle-minimize-tray"
+              ${settings.minimizeToTray ? 'checked' : ''} />
+            <span class="settings-toggle-slider"></span>
+          </label>
+        </div>
+
+        <div class="settings-item">
+          <div class="settings-item-info">
+            <span class="settings-item-label">Launch on Startup</span>
+            <span class="settings-item-desc">Start GLOW Launcher automatically when Windows boots</span>
+          </div>
+          <label class="settings-toggle">
+            <input type="checkbox" class="settings-toggle-input" id="toggle-launch-startup"
+              ${settings.launchOnStartup ? 'checked' : ''} />
+            <span class="settings-toggle-slider"></span>
+          </label>
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <h2 class="settings-section-title">Sidebar</h2>
+        <p class="settings-section-desc">Show or hide pages in the sidebar</p>
+        ${toggleRows}
       </div>
 
       <div class="settings-section">
@@ -90,21 +159,56 @@ function draw(): void {
 }
 
 function bindEvents(): void {
+  // Fortnite path browse
   document.getElementById('fortnite-path-browse')?.addEventListener('click', async () => {
     const selected = await window.glowAPI.dialog.openDirectory();
     if (selected) {
       const input = document.getElementById('fortnite-path-input') as HTMLInputElement;
       input.value = selected;
-      await saveFortnitePath(selected);
+      settings.fortnitePath = selected;
+      await saveSettings();
     }
   });
 
-  const input = document.getElementById('fortnite-path-input') as HTMLInputElement | null;
-  input?.addEventListener('change', async () => {
-    const val = input.value.trim();
+  const pathInput = document.getElementById('fortnite-path-input') as HTMLInputElement | null;
+  pathInput?.addEventListener('change', async () => {
+    const val = pathInput.value.trim();
     if (val) {
-      await saveFortnitePath(val);
+      settings.fortnitePath = val;
+      await saveSettings();
     }
+  });
+
+  // Sidebar page toggles
+  el?.querySelectorAll<HTMLInputElement>('.settings-toggle-input[data-page-id]').forEach((cb) => {
+    cb.addEventListener('change', async () => {
+      const pageId = cb.dataset.pageId!;
+      const hidden = new Set(settings.hiddenPages ?? []);
+      if (cb.checked) {
+        hidden.delete(pageId);
+      } else {
+        hidden.add(pageId);
+      }
+      settings.hiddenPages = [...hidden];
+      await saveSettings();
+      await rebuildSidebar();
+    });
+  });
+
+  // Minimize to tray toggle
+  document.getElementById('toggle-minimize-tray')?.addEventListener('change', async (e) => {
+    const enabled = (e.target as HTMLInputElement).checked;
+    settings.minimizeToTray = enabled;
+    await saveSettings();
+    window.glowAPI.settings.notifyTrayChanged(enabled);
+  });
+
+  // Launch on startup toggle
+  document.getElementById('toggle-launch-startup')?.addEventListener('change', async (e) => {
+    const enabled = (e.target as HTMLInputElement).checked;
+    settings.launchOnStartup = enabled;
+    await saveSettings();
+    window.glowAPI.settings.notifyStartupChanged(enabled);
   });
 }
 
