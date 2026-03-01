@@ -142,7 +142,6 @@ export interface LaunchResult {
 
 /**
  * Launch Fortnite for the selected (main) account.
- * Mirrors the bot's cmd.ts flow exactly.
  */
 export async function launchGame(storage: Storage): Promise<LaunchResult> {
   try {

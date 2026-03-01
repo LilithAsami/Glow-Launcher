@@ -25,6 +25,8 @@ import { xpBoostsPage } from './xpboosts';
 import { accountMgmtPage } from './accountmgmt';
 import { questsPage } from './quests';
 import { autodailyPage } from './autodaily';
+import { autoresponderPage } from './autoresponder';
+import { outpostPage } from './outpost';
 
 // ============================================================
 //  PAGE REGISTRY  (sidebar pages only)
@@ -33,7 +35,7 @@ import { autodailyPage } from './autodaily';
 //  in the toolbar. Only sidebar pages go in this array.
 //
 //  To add a new page:
-//    1. Create a file in this folder  (e.g. mypage.ts)
+//    1. Create a file in this folder 
 //    2. Export a PageDefinition object
 //    3. Import it here and add it to the correct group below
 //
@@ -60,7 +62,8 @@ export const sidebarGroups: SidebarGroup[] = [
       partyPage,
       xpBoostsPage,
       mcpPage,
-      //stalkPage,
+      stalkPage,
+      outpostPage,
     ],
   },
   {
@@ -71,6 +74,7 @@ export const sidebarGroups: SidebarGroup[] = [
       autokickPage,
       autodailyPage,
       expeditionsPage,
+      autoresponderPage,
       statusPage,
     ],
   },

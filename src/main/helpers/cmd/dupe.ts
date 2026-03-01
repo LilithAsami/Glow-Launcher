@@ -23,14 +23,6 @@ function send(channel: string, data: unknown): void {
 export interface DupeResult {
   success: boolean;
   message: string;
-  storageStatus?: 'bugged-with-storage' | 'bugged-no-storage' | null;
-}
-
-interface BaseStatus {
-  inGame: boolean;
-  inBase: boolean;
-  started: boolean;
-  gamemode?: string;
 }
 
 interface ProfileLockInfo {
@@ -38,37 +30,26 @@ interface ProfileLockInfo {
   updated: string | null;
 }
 
-// ─── Check if in game / base ─────────────────────────────────
+// ─── Check if in homebase via campaign profile ─────────────────
 
-async function checkIfInBase(
+async function isInHomebase(
   storage: Storage,
   accountId: string,
   token: string,
-): Promise<BaseStatus> {
+): Promise<boolean> {
   try {
-    const url = `${Endpoints.MATCHMAKING}/${accountId}`;
+    const endpoint = `${Endpoints.MCP}/${accountId}/client/QueryProfile?profileId=campaign&rvn=-1`;
     const { data } = await authenticatedRequest(storage, accountId, token, async (t) => {
-      const res = await axios.get(url, {
-        headers: { Authorization: `bearer ${t}`, 'Content-Type': 'application/json' },
+      const res = await axios.post(endpoint, {}, {
+        headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' },
         timeout: 15_000,
       });
       return res.data;
     });
-
-    if (Array.isArray(data) && data.length > 0) {
-      const session = data[0];
-      const gamemode = session.attributes?.GAMEMODE_s;
-      const started = !!session.started;
-
-      if (gamemode === 'FORTOUTPOST') {
-        return { inBase: true, started, inGame: true };
-      }
-      return { inBase: false, inGame: true, gamemode };
-    }
-
-    return { inBase: false, inGame: false, started: false };
+    const attrs = data?.profileChanges?.[0]?.profile?.stats?.attributes;
+    return !!attrs?.quest_manager?.objectiveDeferral;
   } catch {
-    return { inBase: false, inGame: false, started: false };
+    return false;
   }
 }
 
@@ -146,23 +127,16 @@ export async function executeDupe(storage: Storage): Promise<DupeResult> {
     const main = raw.accounts.find((a) => a.isMain) ?? raw.accounts[0];
     if (!main) return { success: false, message: 'No account found' };
 
-    send('dupe:status', { status: 'checking', message: 'Checking game session...' });
+    send('dupe:status', { status: 'checking', message: 'Checking profile...' });
 
     const token = await refreshAccountToken(storage, main.accountId);
     if (!token) return { success: false, message: 'Failed to authenticate' };
 
-    // Step 1: Check if in base
-    const baseStatus = await checkIfInBase(storage, main.accountId, token);
+    // Step 1: Check if in homebase
+    const inHomebase = await isInHomebase(storage, main.accountId, token);
 
-    if (!baseStatus.inGame) {
-      return { success: false, message: 'You are not in a game session.\nJoin a Homebase mission first.' };
-    }
-
-    if (!baseStatus.inBase) {
-      return {
-        success: false,
-        message: `You are in a game but not in your Homebase (detected: ${baseStatus.gamemode || 'unknown'}).\nYou need to be in your Homebase (FORTOUTPOST).`,
-      };
+    if (!inHomebase) {
+      return { success: false, message: 'You are not in a Homebase mission.\nJoin a Homebase mission first.' };
     }
 
     // Step 2: First attempt
@@ -170,17 +144,7 @@ export async function executeDupe(storage: Storage): Promise<DupeResult> {
 
     const firstAttempt = await tryDupe(storage, main.accountId, token);
     if (firstAttempt) {
-      // Check storage status
-      const newBaseStatus = await checkIfInBase(storage, main.accountId, token);
-      let storageStatus: DupeResult['storageStatus'] = null;
-      if (newBaseStatus.inBase) {
-        storageStatus = newBaseStatus.started ? 'bugged-with-storage' : 'bugged-no-storage';
-      }
-      return {
-        success: true,
-        message: `Dupe executed successfully on ${main.displayName}`,
-        storageStatus,
-      };
+      return { success: true, message: `Dupe executed successfully on ${main.displayName}` };
     }
 
     // Step 3: Check profile data
@@ -192,28 +156,18 @@ export async function executeDupe(storage: Storage): Promise<DupeResult> {
       return { success: false, message: 'Profile is not locked (not bugged).\nMake sure you are properly bugged before using dupe.' };
     }
 
-    // Step 4: If profile is outdated (>10 min), try 2 more times
+    // Step 4: If profile is outdated (>10 min), retry up to 2 more times
     if (isProfileOutdated(profileData.updated)) {
       send('dupe:status', { status: 'attempting', message: 'Profile outdated, retrying...' });
 
       const secondAttempt = await tryDupe(storage, main.accountId, token);
       if (secondAttempt) {
-        const newBaseStatus = await checkIfInBase(storage, main.accountId, token);
-        let storageStatus: DupeResult['storageStatus'] = null;
-        if (newBaseStatus.inBase) {
-          storageStatus = newBaseStatus.started ? 'bugged-with-storage' : 'bugged-no-storage';
-        }
-        return { success: true, message: `Dupe executed successfully on ${main.displayName}`, storageStatus };
+        return { success: true, message: `Dupe executed successfully on ${main.displayName}` };
       }
 
       const thirdAttempt = await tryDupe(storage, main.accountId, token);
       if (thirdAttempt) {
-        const newBaseStatus = await checkIfInBase(storage, main.accountId, token);
-        let storageStatus: DupeResult['storageStatus'] = null;
-        if (newBaseStatus.inBase) {
-          storageStatus = newBaseStatus.started ? 'bugged-with-storage' : 'bugged-no-storage';
-        }
-        return { success: true, message: `Dupe executed successfully on ${main.displayName}`, storageStatus };
+        return { success: true, message: `Dupe executed successfully on ${main.displayName}` };
       }
 
       return { success: false, message: 'Dupe failed after 3 attempts with outdated profile.' };
@@ -226,23 +180,16 @@ export async function executeDupe(storage: Storage): Promise<DupeResult> {
     const timeToWait = safeExpiration.getTime() - now.getTime();
 
     if (timeToWait <= 0) {
-      // Already expired, try immediately
       send('dupe:status', { status: 'attempting', message: 'Lock expired, attempting dupe...' });
 
       const finalAttempt = await tryDupe(storage, main.accountId, token);
       if (finalAttempt) {
-        const newBaseStatus = await checkIfInBase(storage, main.accountId, token);
-        let storageStatus: DupeResult['storageStatus'] = null;
-        if (newBaseStatus.inBase) {
-          storageStatus = newBaseStatus.started ? 'bugged-with-storage' : 'bugged-no-storage';
-        }
-        return { success: true, message: `Dupe executed successfully on ${main.displayName}`, storageStatus };
+        return { success: true, message: `Dupe executed successfully on ${main.displayName}` };
       }
       return { success: false, message: 'Dupe failed after lock expiration.' };
     }
 
     // Wait with countdown updates every 5 seconds
-    const totalSeconds = Math.ceil(timeToWait / 1000);
     send('dupe:status', {
       status: 'waiting',
       message: `Waiting for profile lock to expire...`,
@@ -267,7 +214,6 @@ export async function executeDupe(storage: Storage): Promise<DupeResult> {
         });
       }, 5000);
 
-      // Final resolve after full wait
       setTimeout(() => {
         clearInterval(interval);
         resolve();
@@ -279,12 +225,7 @@ export async function executeDupe(storage: Storage): Promise<DupeResult> {
 
     const finalAttempt = await tryDupe(storage, main.accountId, token);
     if (finalAttempt) {
-      const newBaseStatus = await checkIfInBase(storage, main.accountId, token);
-      let storageStatus: DupeResult['storageStatus'] = null;
-      if (newBaseStatus.inBase) {
-        storageStatus = newBaseStatus.started ? 'bugged-with-storage' : 'bugged-no-storage';
-      }
-      return { success: true, message: `Dupe executed successfully on ${main.displayName}`, storageStatus };
+      return { success: true, message: `Dupe executed successfully on ${main.displayName}` };
     }
 
     return { success: false, message: 'Dupe failed after waiting for profile lock expiration.' };

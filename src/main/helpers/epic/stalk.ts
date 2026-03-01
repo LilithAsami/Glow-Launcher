@@ -1,5 +1,5 @@
 /**
- * Stalk — search players and get matchmaking info for Fortnite players.
+ * Stalk — search players and check if they are in a Homebase session.
  */
 
 import axios from 'axios';
@@ -16,9 +16,6 @@ export interface PlayerSearchResult {
   platform?: string;
 }
 
-/**
- * Search players by prefix using User Search Service.
- */
 async function searchByPrefix(
   token: string,
   accountId: string,
@@ -48,9 +45,6 @@ async function searchByPrefix(
   return results;
 }
 
-/**
- * Search player by exact display name.
- */
 async function searchByDisplayName(
   token: string,
   displayName: string,
@@ -73,10 +67,6 @@ async function searchByDisplayName(
   }
 }
 
-/**
- * Search players across multiple platforms with autocomplete.
- * Uses authenticatedRequest for auto-401 retry.
- */
 export async function searchPlayers(
   storage: Storage,
   searchTerm: string,
@@ -91,18 +81,13 @@ export async function searchPlayers(
   const found = new Map<string, PlayerSearchResult>();
   const platforms = ['epic', 'psn', 'xbl', 'steam', 'nsw'];
 
-  // Strategy 1: User Search Service across platforms
   let userSearchFailed = false;
   for (const plat of platforms) {
     if (found.size >= 25) break;
     try {
       const { data: results } = await authenticatedRequest(
-        storage,
-        main.accountId,
-        token,
-        async (t) => {
-          return searchByPrefix(t, main.accountId, searchTerm, plat);
-        },
+        storage, main.accountId, token,
+        async (t) => searchByPrefix(t, main.accountId, searchTerm, plat),
       );
       for (const p of results) {
         if (!found.has(p.accountId)) {
@@ -118,27 +103,19 @@ export async function searchPlayers(
         if (found.size >= 25) break;
       }
     } catch (err: any) {
-      if (err?.response?.status === 403) {
-        userSearchFailed = true;
-        break;
-      }
+      if (err?.response?.status === 403) { userSearchFailed = true; break; }
       continue;
     }
   }
 
-  // Strategy 2: Exact display name lookup
   if (userSearchFailed || found.size === 0) {
     try {
       const { data: results } = await authenticatedRequest(
-        storage,
-        main.accountId,
-        token,
+        storage, main.accountId, token,
         async (t) => searchByDisplayName(t, searchTerm),
       );
       for (const p of results) {
-        if (!found.has(p.accountId)) {
-          found.set(p.accountId, { ...p, platform: 'Epic' });
-        }
+        if (!found.has(p.accountId)) found.set(p.accountId, { ...p, platform: 'Epic' });
       }
     } catch { /* ignore */ }
   }
@@ -146,63 +123,18 @@ export async function searchPlayers(
   return Array.from(found.values()).slice(0, 25);
 }
 
-// ── Matchmaking info ──────────────────────────────────────
+// ── Homebase check via QueryPublicProfile ─────────────────
 
 export interface MatchmakingResult {
   online: boolean;
+  isHomebase: boolean;
   displayName: string;
   accountId: string;
-  sessionId?: string;
-  ownerId?: string;
-  totalPlayers?: number;
-  maxPlayers?: number | string;
-  started?: boolean;
-  gameType?: string;
-  gameMode?: string;
-  region?: string;
-  subRegion?: string;
-  serverAddress?: string;
-  serverPort?: string;
-  players?: { index: number; accountId: string; displayName: string }[];
 }
 
 /**
- * Look up accountId → displayName.
- */
-async function lookupAccountId(token: string, accountId: string): Promise<string> {
-  try {
-    const res = await axios.get(
-      `${Endpoints.LOOKUP_ACCOUNTID}/${accountId}`,
-      {
-        headers: { Authorization: `bearer ${token}`, 'Content-Type': 'application/json' },
-        timeout: 10000,
-      },
-    );
-    return res.data?.displayName || accountId;
-  } catch {
-    return accountId;
-  }
-}
-
-/**
- * Look up displayName → accountId.
- */
-async function getAccountIdFromDisplayName(
-  token: string,
-  displayName: string,
-): Promise<{ id: string; displayName: string }> {
-  const res = await axios.get(
-    `${Endpoints.LOOKUP_DISPLAYNAME}/${encodeURIComponent(displayName)}`,
-    {
-      headers: { Authorization: `bearer ${token}`, 'Content-Type': 'application/json' },
-      timeout: 10000,
-    },
-  );
-  return { id: res.data.id, displayName: res.data.displayName };
-}
-
-/**
- * Get matchmaking info for a target account.
+ * Check if a player is currently in a Homebase session by querying
+ * their public campaign profile and checking for objectiveDeferral.
  */
 export async function getMatchmakingInfo(
   storage: Storage,
@@ -215,7 +147,7 @@ export async function getMatchmakingInfo(
   const token = await refreshAccountToken(storage, main.accountId);
   if (!token) throw new Error('Token refresh failed');
 
-  // Resolve target
+  // Resolve target accountId + displayName
   let targetAccountId: string;
   let targetDisplayName: string;
 
@@ -223,115 +155,64 @@ export async function getMatchmakingInfo(
 
   if (isAccountId) {
     targetAccountId = targetInput;
-    const { data: name } = await authenticatedRequest(
-      storage, main.accountId, token,
-      async (t) => lookupAccountId(t, targetInput),
-    );
-    targetDisplayName = name;
+    try {
+      const { data: name } = await authenticatedRequest(
+        storage, main.accountId, token,
+        async (t) => {
+          const res = await axios.get(`${Endpoints.LOOKUP_ACCOUNTID}/${targetAccountId}`, {
+            headers: { Authorization: `bearer ${t}`, 'Content-Type': 'application/json' },
+            timeout: 10000,
+          });
+          return res.data?.displayName || targetAccountId;
+        },
+      );
+      targetDisplayName = name;
+    } catch {
+      targetDisplayName = targetAccountId;
+    }
   } else {
     const { data: acct } = await authenticatedRequest(
       storage, main.accountId, token,
-      async (t) => getAccountIdFromDisplayName(t, targetInput),
+      async (t) => {
+        const res = await axios.get(
+          `${Endpoints.LOOKUP_DISPLAYNAME}/${encodeURIComponent(targetInput)}`,
+          {
+            headers: { Authorization: `bearer ${t}`, 'Content-Type': 'application/json' },
+            timeout: 10000,
+          },
+        );
+        return { id: res.data.id, displayName: res.data.displayName };
+      },
     );
     targetAccountId = acct.id;
     targetDisplayName = acct.displayName;
   }
 
-  // Get matchmaking session
-  let sessionData: any = null;
+  // QueryPublicProfile campaign — check objectiveDeferral existence
   try {
-    const { data: matchData } = await authenticatedRequest(
+    const { data } = await authenticatedRequest(
       storage, main.accountId, token,
       async (t) => {
-        const res = await axios.get(
-          `${Endpoints.MATCHMAKING}/${targetAccountId}`,
+        const res = await axios.post(
+          `${Endpoints.MCP}/${targetAccountId}/public/QueryPublicProfile?profileId=campaign&rvn=-1`,
+          {},
           {
             headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' },
-            timeout: 10000,
+            timeout: 15000,
           },
         );
         return res.data;
       },
     );
 
-    if (Array.isArray(matchData)) {
-      sessionData = matchData.length > 0 ? matchData[0] : null;
-    } else if (typeof matchData === 'object') {
-      sessionData = matchData;
-    }
+    const attrs = data?.profileChanges?.[0]?.profile?.stats?.attributes;
+    const isHomebase = !!(attrs?.quest_manager?.objectiveDeferral);
+
+    return { online: isHomebase, isHomebase, displayName: targetDisplayName, accountId: targetAccountId };
   } catch (err: any) {
-    if (err?.response?.status === 404) {
-      sessionData = null;
-    } else {
-      throw err;
+    if (err?.response?.status === 404 || err?.response?.status === 403) {
+      return { online: false, isHomebase: false, displayName: targetDisplayName, accountId: targetAccountId };
     }
+    throw err;
   }
-
-  // Offline
-  if (!sessionData || !sessionData.id) {
-    return {
-      online: false,
-      displayName: targetDisplayName,
-      accountId: targetAccountId,
-    };
-  }
-
-  // Online — parse session
-  const attributes = sessionData.attributes || {};
-  const region = attributes.REGION_s || 'N/A';
-  const gameMode = attributes.GAMEMODE_s || 'N/A';
-  const serverAddress = attributes.SERVERADDRESS_s || attributes.ADDRESS_s || 'N/A';
-  const serverPort = attributes.serverPort_s || sessionData.serverPort || 'N/A';
-  const subRegion = attributes.SUBREGION_s || 'N/A';
-
-  let gameType = 'BR';
-  if (gameMode === 'FORTPVE' || gameMode.toLowerCase().includes('fortoutpost') || gameMode.toLowerCase().includes('outpost')) {
-    gameType = 'STW';
-  }
-
-  // Get player list
-  let allPlayerIds: string[] = [];
-  if (gameType === 'STW') {
-    allPlayerIds = [...(sessionData.publicPlayers || []), ...(sessionData.privatePlayers || [])];
-  } else {
-    allPlayerIds = sessionData.assignments || [];
-  }
-
-  // Resolve player names in parallel
-  const players: { index: number; accountId: string; displayName: string }[] = [];
-  if (allPlayerIds.length > 0) {
-    const limited = allPlayerIds.slice(0, 50);
-    const resolved = await Promise.all(
-      limited.map(async (pid, i) => {
-        try {
-          const { data: name } = await authenticatedRequest(
-            storage, main.accountId, token,
-            async (t) => lookupAccountId(t, pid),
-          );
-          return { index: i + 1, accountId: pid, displayName: name };
-        } catch {
-          return { index: i + 1, accountId: pid, displayName: pid };
-        }
-      }),
-    );
-    players.push(...resolved);
-  }
-
-  return {
-    online: true,
-    displayName: targetDisplayName,
-    accountId: targetAccountId,
-    sessionId: sessionData.id || 'N/A',
-    ownerId: sessionData.ownerId || 'N/A',
-    totalPlayers: sessionData.totalPlayers || 0,
-    maxPlayers: sessionData.maxPublicPlayers || sessionData.maxPlayers || 'N/A',
-    started: sessionData.started || false,
-    gameType,
-    gameMode,
-    region: subRegion !== 'N/A' ? subRegion : region,
-    subRegion,
-    serverAddress,
-    serverPort,
-    players,
-  };
 }

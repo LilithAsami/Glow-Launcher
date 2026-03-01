@@ -23,6 +23,16 @@ let airLoading = false;
 let airActivated: boolean | null = null;
 let airError: string | null = null;
 
+// ── Worker Power state ────────────────────────────────────────
+let wpLoading = false;
+let wpData: any = null;
+let wpStats: { workerCount: number; modified: number; sizeMB: string } | null = null;
+let wpError: string | null = null;
+let wpMode: 'high' | 'low' = 'high';
+
+// ── Modal active data ─────────────────────────────────────────
+let activeModalData: any = null;
+
 
 // ── Trap Height state ─────────────────────────────────────────
 interface TrapListItem { name: string; guid: string; desc: string; defaultHeight: string; rarity: string; tier: string; family: string; heightSupported: boolean }
@@ -60,6 +70,14 @@ function getDefaultFileName(): string {
   const m = String(now.getMonth() + 1).padStart(2, '0');
   const y = now.getFullYear();
   return `worldinfo_${y}_${m}_${d}`;
+}
+
+function getWpFileName(): string {
+  const now = new Date();
+  const d = String(now.getDate()).padStart(2, '0');
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const y = now.getFullYear();
+  return `campaign_${wpMode}power_${y}_${m}_${d}`;
 }
 
 function esc(s: string): string {
@@ -527,6 +545,77 @@ function draw(): void {
           </div>
         </div>
 
+        <!-- Worker Power Card -->
+        <div class="files-card" id="files-workerpower-card">
+          <div class="files-card-icon">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
+            </svg>
+          </div>
+          <div class="files-card-body">
+            <h3 class="files-card-title">Worker Power</h3>
+            <p class="files-card-desc">Generate campaign profile with all workers set to max or min level.</p>
+
+            <div class="wp-mode-toggle">
+              <button class="wp-mode-btn ${wpMode === 'high' ? 'wp-mode-btn--active' : ''}" id="wp-mode-high">High Power</button>
+              <button class="wp-mode-btn ${wpMode === 'low' ? 'wp-mode-btn--active' : ''}" id="wp-mode-low">Low Power</button>
+            </div>
+
+            ${wpLoading ? `
+              <div class="files-card-loading">
+                <div class="files-spinner"></div>
+                <span>Querying campaign profile...</span>
+              </div>
+            ` : wpError ? `
+              <div class="files-card-error">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+                <span>${wpError}</span>
+              </div>
+              <button class="files-btn files-btn--primary" id="files-wp-generate">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+                Retry
+              </button>
+            ` : wpData ? `
+              <div class="files-card-stats">
+                <div class="files-stat">
+                  <span class="files-stat-value">${wpStats?.workerCount ?? 0}</span>
+                  <span class="files-stat-label">Workers</span>
+                </div>
+                <div class="files-stat">
+                  <span class="files-stat-value">${wpStats?.modified ?? 0}</span>
+                  <span class="files-stat-label">Modified</span>
+                </div>
+                <div class="files-stat">
+                  <span class="files-stat-value">${wpStats?.sizeMB ?? '0'}MB</span>
+                  <span class="files-stat-label">Size</span>
+                </div>
+                <div class="files-stat">
+                  <span class="files-stat-value">Lv ${wpMode === 'high' ? 50 : 1}</span>
+                  <span class="files-stat-label">Level</span>
+                </div>
+              </div>
+              <div class="files-card-actions">
+                <button class="files-btn files-btn--primary" id="files-wp-download">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                  Download JSON
+                </button>
+                <button class="files-btn files-btn--secondary" id="files-wp-preview">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                  Preview JSON
+                </button>
+                <button class="files-btn files-btn--ghost" id="files-wp-refresh">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+                </button>
+              </div>
+            ` : `
+              <button class="files-btn files-btn--primary" id="files-wp-generate">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+                Generate ${wpMode === 'high' ? 'High' : 'Low'} Power File
+              </button>
+            `}
+          </div>
+        </div>
+
         <!-- Dev Builds Card -->
         <div class="files-card files-card--deco" id="files-devbuilds-card">
           <img src="../assets/icons/devbuilds.png" class="files-card-deco-img" alt="" />
@@ -717,6 +806,25 @@ function bindEvents(): void {
   const refreshBtn = el.querySelector('#files-worldinfo-refresh') as HTMLButtonElement | null;
   refreshBtn?.addEventListener('click', () => loadWorldInfo());
 
+  // ── Worker Power ─────────────────────────────────────────
+  const wpGenBtn = el.querySelector('#files-wp-generate') as HTMLButtonElement | null;
+  wpGenBtn?.addEventListener('click', () => loadWorkerPower());
+
+  const wpDownloadBtn = el.querySelector('#files-wp-download') as HTMLButtonElement | null;
+  wpDownloadBtn?.addEventListener('click', () => downloadWorkerPower());
+
+  const wpPreviewBtn = el.querySelector('#files-wp-preview') as HTMLButtonElement | null;
+  wpPreviewBtn?.addEventListener('click', () => openWpPreview());
+
+  const wpRefreshBtn = el.querySelector('#files-wp-refresh') as HTMLButtonElement | null;
+  wpRefreshBtn?.addEventListener('click', () => loadWorkerPower());
+
+  const wpHighBtn = el.querySelector('#wp-mode-high') as HTMLButtonElement | null;
+  wpHighBtn?.addEventListener('click', () => { wpMode = 'high'; wpData = null; wpStats = null; wpError = null; draw(); });
+
+  const wpLowBtn = el.querySelector('#wp-mode-low') as HTMLButtonElement | null;
+  wpLowBtn?.addEventListener('click', () => { wpMode = 'low'; wpData = null; wpStats = null; wpError = null; draw(); });
+
   const devCheckBtn = el.querySelector('#files-devbuilds-check') as HTMLButtonElement | null;
   devCheckBtn?.addEventListener('click', () => checkDevBuildStatus());
 
@@ -804,8 +912,8 @@ function bindEvents(): void {
   });
 
   copyBtn?.addEventListener('click', () => {
-    if (!worldInfoData) return;
-    const jsonStr = JSON.stringify(worldInfoData, null, 2);
+    if (!activeModalData) return;
+    const jsonStr = JSON.stringify(activeModalData, null, 2);
     navigator.clipboard.writeText(jsonStr).then(() => {
       if (copyBtn) {
         copyBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>`;
@@ -870,6 +978,7 @@ async function downloadWorldInfo(): Promise<void> {
 
 function openPreview(): void {
   if (!worldInfoData || !el) return;
+  activeModalData = worldInfoData;
   const overlay = el.querySelector('#files-modal-overlay') as HTMLElement;
   const jsonPre = el.querySelector('#files-modal-json') as HTMLPreElement;
   const searchInput = el.querySelector('#files-modal-search-input') as HTMLInputElement;
@@ -885,6 +994,60 @@ function closeModal(): void {
   if (!el) return;
   const overlay = el.querySelector('#files-modal-overlay') as HTMLElement;
   if (overlay) overlay.style.display = 'none';
+}
+
+// ─── Worker Power Actions ─────────────────────────────────────
+
+async function loadWorkerPower(): Promise<void> {
+  if (wpLoading) return;
+  wpLoading = true;
+  wpError = null;
+  draw();
+
+  try {
+    const targetLevel = wpMode === 'high' ? 50 : 1;
+    const result = await window.glowAPI.files.workerPower(targetLevel);
+    if (result.success) {
+      wpData = result.data;
+      wpStats = {
+        workerCount: result.workerCount ?? 0,
+        modified: result.modified ?? 0,
+        sizeMB: result.sizeMB ?? '0',
+      };
+      wpError = null;
+    } else {
+      wpError = result.error || 'Failed to query campaign profile';
+    }
+  } catch (err: any) {
+    wpError = err.message || 'Unexpected error';
+  } finally {
+    wpLoading = false;
+    draw();
+  }
+}
+
+async function downloadWorkerPower(): Promise<void> {
+  if (!wpData) return;
+  const jsonStr = JSON.stringify(wpData, null, 2);
+  try {
+    await window.glowAPI.files.save(jsonStr, getWpFileName());
+  } catch {
+    // user cancelled or error — silent
+  }
+}
+
+function openWpPreview(): void {
+  if (!wpData || !el) return;
+  activeModalData = wpData;
+  const overlay = el.querySelector('#files-modal-overlay') as HTMLElement;
+  const jsonPre = el.querySelector('#files-modal-json') as HTMLPreElement;
+  const searchInput = el.querySelector('#files-modal-search-input') as HTMLInputElement;
+  if (!overlay || !jsonPre) return;
+
+  const jsonStr = JSON.stringify(wpData, null, 2);
+  jsonPre.innerHTML = syntaxHighlight(jsonStr);
+  overlay.style.display = 'flex';
+  if (searchInput) searchInput.value = '';
 }
 
 // ─── Dev Builds Actions ───────────────────────────────────────

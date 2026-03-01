@@ -6,7 +6,7 @@
  * Flujo:
  * 1. Conexión XMPP a cada cuenta activa
  * 2. Escucha evento PARTY_UPDATED en raw:incoming
- * 3. Al detectar evento → verifica entrada a partida (party matchmakingState, 5s×30)
+ * 3. Al detectar evento → verifica entrada a partida 
  * 4. Captura baseline de matches_played del MCP campaign
  * 5. Monitorea completación (polling MCP 5s hasta matches_played > baseline)
  * 6. Ejecuta acciones configuradas

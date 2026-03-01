@@ -84,7 +84,7 @@ const SERIES_COLORS: Record<string, { bg: string; border: string; gradient: [str
 };
 
 function getColors(rarity: string, series: string | null): { bg: string; border: string; gradient: [string, string] } {
-  // Try series first (fuzzy matching like shop.ts)
+  // Try series first
   if (series) {
     const raw = series.toLowerCase();
     // Strip trailing "series" (with or without whitespace)

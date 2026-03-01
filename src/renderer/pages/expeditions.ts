@@ -676,7 +676,7 @@ function onDataChanged(): void { reload(); }
 export const expeditionsPage: PageDefinition = {
   id: 'expeditions',
   label: 'Expeditions',
-  icon: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>`,
+  icon: `<img src="assets/icons/fnui/Automated/expedition.png" alt="Status" width="18" height="18" style="object-fit:contain;vertical-align:middle" />`,
   order: 26,
   async render(container) {
     el = container;

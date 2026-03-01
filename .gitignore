@@ -5,3 +5,5 @@ data/
 *.js.map
 .env
 scripts/
+_*.js
+_*.json

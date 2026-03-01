@@ -94,7 +94,7 @@ All pages are registered in `src/renderer/pages/registry.ts` and auto-sorted int
 ## Project Structure
 
 ```
-GLOW LAUNCHER v0.1/
+GLOW LAUNCHER/
 │
 ├── assets/                              # Image assets
 │   ├── banner.png                       #   Header logo banner

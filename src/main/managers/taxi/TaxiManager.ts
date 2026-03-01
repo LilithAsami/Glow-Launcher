@@ -36,7 +36,7 @@ export interface TaxiAccountConfig {
   skin: string;
   emote: string;
   level: number;
-  statsMode: 'normal' | 'low';
+  powerLevel: number;
   responsabilityAccepted: boolean;
   autoAcceptFriends: boolean;
 }
@@ -69,51 +69,86 @@ export interface TaxiAccountStatus {
   error?: string;
 }
 
-// ── Stats constants (matching reference taxis exactly) ──────
+// ── Power Level Calculation (ported from power.py) ──────────
 
-const STATS_HIGH = {
-  FORTStats: {
-    fortitude: 5797,
-    offense: 5797,
-    resistance: 5797,
-    tech: 5797,
-    teamFortitude: 5797,
-    teamOffense: 0,
-    teamResistance: 0,
-    teamTech: 0,
-    fortitude_Phoenix: 5797,
-    offense_Phoenix: 5797,
-    resistance_Phoenix: 5797,
-    tech_Phoenix: 5797,
-    teamFortitude_Phoenix: 0,
-    teamOffense_Phoenix: 0,
-    teamResistance_Phoenix: 0,
-    teamTech_Phoenix: 0,
-  },
-};
-const POWER_HIGH = 288;
+const HOMEBASE_RATING_KEYS: [number, number][] = [
+  [0, 1], [236, 2], [364, 3], [432, 4], [512, 5],
+  [704, 7], [932, 8], [1196, 9], [1876, 13], [2740, 16],
+  [3824, 19], [4692, 22], [5460, 24], [6260, 25], [7172, 26],
+  [8084, 29], [9552, 32], [10912, 36], [13104, 41], [14844, 46],
+  [17180, 49], [19008, 53], [20928, 54], [22708, 55], [24588, 57],
+  [26324, 60], [28804, 63], [31312, 68], [35008, 73], [37660, 78],
+  [40380, 81], [42308, 84], [44316, 86], [46448, 87], [48592, 89],
+  [50852, 93], [54480, 96], [58064, 102], [62528, 107], [65472, 113],
+  [68320, 116], [70400, 120], [72384, 121], [74464, 123], [76448, 124],
+  [78528, 126], [80512, 127], [82592, 128], [84576, 130], [86124, 131],
+  [87040, 133], [87520, 134], [87904, 136], [88384, 137], [88768, 139],
+  [89248, 140], [89632, 142], [90112, 143], [90304, 144], [180608, 288],
+];
 
-const STATS_LOW = {
-  FORTStats: {
-    fortitude: 0,
-    offense: 0,
-    resistance: 0,
-    tech: 0,
-    teamFortitude: 0,
-    teamOffense: 0,
-    teamResistance: 0,
-    teamTech: 0,
-    fortitude_Phoenix: 0,
-    offense_Phoenix: 0,
-    resistance_Phoenix: 0,
-    tech_Phoenix: 0,
-    teamFortitude_Phoenix: 0,
-    teamOffense_Phoenix: 0,
-    teamResistance_Phoenix: 0,
-    teamTech_Phoenix: 0,
-  },
-};
-const POWER_LOW = 1;
+function evalCurve(key: number): number {
+  if (key < HOMEBASE_RATING_KEYS[0][0]) return HOMEBASE_RATING_KEYS[0][1];
+  const last = HOMEBASE_RATING_KEYS[HOMEBASE_RATING_KEYS.length - 1];
+  if (key >= last[0]) return last[1];
+  for (let i = 0; i < HOMEBASE_RATING_KEYS.length; i++) {
+    if (HOMEBASE_RATING_KEYS[i][0] > key) {
+      const [prevTime, prevValue] = HOMEBASE_RATING_KEYS[i - 1];
+      const [nextTime, nextValue] = HOMEBASE_RATING_KEYS[i];
+      const fac = (key - prevTime) / (nextTime - prevTime);
+      return prevValue * (1 - fac) + nextValue * fac;
+    }
+  }
+  return last[1];
+}
+
+function findStatForPowerLevel(targetPL: number): number {
+  // power-extra.py: find_stat_for_power_level with binary search + curve (mid * 16)
+  if (targetPL < 1) return 1;
+  if (targetPL > 288) return 180608;
+  let lo = 1;
+  let hi = 10000;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    const calc = evalCurve(mid * 16);
+    if (Math.abs(calc - targetPL) < 0.5) return mid;
+    if (calc < targetPL) lo = mid + 1;
+    else hi = mid - 1;
+  }
+  return hi;
+}
+
+function calculatePowerNumber(targetPL: number): number {
+  // power-extra.py sends power_level directly (not calculate_power_number result)
+  return targetPL;
+}
+
+function buildStatsForPowerLevel(pl: number): { stats: any; power: number } {
+  const stat = findStatForPowerLevel(pl);
+  const power = calculatePowerNumber(pl);
+  return {
+    stats: {
+      FORTStats: {
+        fortitude: stat,
+        offense: stat,
+        resistance: stat,
+        tech: stat,
+        teamFortitude: stat,
+        teamOffense: stat,
+        teamResistance: stat,
+        teamTech: stat,
+        fortitude_Phoenix: stat,
+        offense_Phoenix: stat,
+        resistance_Phoenix: stat,
+        tech_Phoenix: stat,
+        teamFortitude_Phoenix: stat,
+        teamOffense_Phoenix: stat,
+        teamResistance_Phoenix: stat,
+        teamTech_Phoenix: stat,
+      },
+    },
+    power,
+  };
+}
 
 // ── Default config ─────────────────────────────────────────
 
@@ -128,7 +163,7 @@ export function defaultTaxiConfig(): TaxiAccountConfig {
     skin: 'CID_028_Athena_Commando_F',
     emote: 'EID_Floss',
     level: 100,
-    statsMode: 'normal',
+    powerLevel: 130,
     responsabilityAccepted: false,
     autoAcceptFriends: true,
   };
@@ -145,7 +180,7 @@ interface TaxiClientInstance {
   readyTriggered: boolean;
   queue: TaxiQueueEntry[];
   byeTimeout?: NodeJS.Timeout;
-  currentStatsMode: 'normal' | 'low';
+  currentPowerLevel: number;
 }
 
 // ── Helpers ─────────────────────────────────────────────────
@@ -188,7 +223,14 @@ class TaxiManager {
     if (!data.accounts[accountId]) {
       data.accounts[accountId] = defaultTaxiConfig();
     }
-    return data.accounts[accountId];
+    const cfg = data.accounts[accountId];
+    // Migrate legacy statsMode → powerLevel
+    if (cfg.powerLevel === undefined || cfg.powerLevel === null) {
+      const legacy = (cfg as any).statsMode;
+      cfg.powerLevel = legacy === 'low' ? 1 : 130;
+      delete (cfg as any).statsMode;
+    }
+    return cfg;
   }
 
   // ── Init ────────────────────────────────────────────────
@@ -401,7 +443,7 @@ class TaxiManager {
       console.log(`[TaxiAvatar] Token: ${token ? 'YES (' + token.substring(0, 20) + '...)' : 'NULL'}`);
       if (!token) return this.DEFAULT_AVATAR;
 
-      // 2. Fetch from Epic API (exactly like avatarHandler.ts)
+      // 2. Fetch from Epic API
       const avatarApiUrl = `${Endpoints.ACCOUNT_AVATAR}/fortnite/ids?accountIds=${accountId}`;
       console.log(`[TaxiAvatar] Requesting: ${avatarApiUrl}`);
 
@@ -446,7 +488,7 @@ class TaxiManager {
         }
       }
 
-      // 3. Build URL (exactly like avatarHandler.ts)
+      // 3. Build URL
       let iconURL: string;
       if (avatarId && avatarId.includes(':')) {
         const idPart = avatarId.split(':')[1];
@@ -518,7 +560,7 @@ class TaxiManager {
       sessionActive: false,
       readyTriggered: false,
       queue: [],
-      currentStatsMode: config.statsMode,
+      currentPowerLevel: config.powerLevel,
     };
 
     this.instances.set(accountId, inst);
@@ -566,7 +608,7 @@ class TaxiManager {
     }
 
     // Apply stats
-    await this.applyStats(inst, config.statsMode);
+    await this.applyStats(inst, config.powerLevel);
 
     send('taxi:status-update', {
       accountId,
@@ -599,12 +641,12 @@ class TaxiManager {
           this.sendLog(accountId, 'info', 'Bot joined party, applying cosmetics...');
           await new Promise((r) => setTimeout(r, 1000));
 
-          // Apply cosmetics + ALWAYS HIGH stats (like reference taxis.ts after login)
+          // Apply cosmetics + ALWAYS HIGH stats
           try { await client.party.me.setOutfit(freshCfg.skin); } catch {}
           try { await client.party.me.setBanner('standardbanner15'); } catch {}
           try { await client.party.me.setLevel(String(freshCfg.level)); } catch {}
-          // Always HIGH stats on join (like reference)
-          await this.applyStats(inst, 'normal');
+          // Apply configured power level stats on join
+          await this.applyStats(inst, freshCfg.powerLevel);
         }
       } catch (e: any) {
         this.sendLog(accountId, 'warn', `Error applying cosmetics on join: ${e?.message}`);
@@ -639,12 +681,12 @@ class TaxiManager {
       }
     });
 
-    // Party chat message → switch to reversa/low stats
+    // Party chat message → switch to reversa/low stats (PL 1)
     client.on('party:member:message', async (msgObj: any) => {
       try {
-        await this.applyStats(inst, 'low');
-        inst.currentStatsMode = 'low';
-        this.sendLog(accountId, 'info', 'Switched to low stats (party message)');
+        await this.applyStats(inst, 1);
+        inst.currentPowerLevel = 1;
+        this.sendLog(accountId, 'info', 'Switched to PL 1 stats (party message)');
       } catch {}
     });
 
@@ -824,21 +866,22 @@ class TaxiManager {
 
     // Free → accept invite
     try {
-      // Apply HIGH stats BEFORE accepting (like reference: aceptarInvitacion ALWAYS uses STATS_ALTAS)
+      // Apply configured power level stats BEFORE accepting
       try {
+        const { stats: preStats, power: prePower } = buildStatsForPowerLevel(config.powerLevel);
         await inst.client.party?.me.sendPatch({
-          'Default:FORTStats_j': JSON.stringify(STATS_HIGH),
-          'Default:CampaignCommanderLoadoutRating_d': POWER_HIGH,
-          'Default:CampaignBackpackRating_d': POWER_HIGH,
+          'Default:FORTStats_j': JSON.stringify(preStats),
+          'Default:CampaignCommanderLoadoutRating_d': prePower,
+          'Default:CampaignBackpackRating_d': prePower,
         } as any);
-        inst.currentStatsMode = 'normal';
-        this.sendLog(inst.accountId, 'info', 'HIGH stats applied before accepting invite');
+        inst.currentPowerLevel = config.powerLevel;
+        this.sendLog(inst.accountId, 'info', `PL ${config.powerLevel} stats applied before accepting invite`);
       } catch {}
 
       inst.occupied = true;
       inst.sessionActive = true;
       inst.readyTriggered = false;
-      inst.currentStatsMode = config.statsMode;
+      inst.currentPowerLevel = config.powerLevel;
 
       await invite.accept();
       this.sendLog(inst.accountId, 'success', `Joined ${senderName}'s party`);
@@ -848,8 +891,8 @@ class TaxiManager {
       try { await inst.client.party.me.setOutfit(config.skin); } catch {}
       try { await inst.client.party.me.setBanner('standardbanner15'); } catch {}
       try { await inst.client.party.me.setLevel(String(config.level)); } catch {}
-      // Always apply HIGH stats on session start (like reference)
-      await this.applyStats(inst, 'normal');
+      // Apply configured power level stats on session start
+      await this.applyStats(inst, config.powerLevel);
 
       // Set emote after cosmetics
       await new Promise((r) => setTimeout(r, 500));
@@ -870,15 +913,16 @@ class TaxiManager {
       // Start timer
       this.startLeaveTimer(inst, config);
 
-      // Re-apply HIGH stats after 3 seconds (like reference: ALWAYS STATS_ALTAS)
+      // Re-apply configured power level stats after 3 seconds
       setTimeout(async () => {
         try {
+          const { stats: reStats, power: rePower } = buildStatsForPowerLevel(config.powerLevel);
           await inst.client.party?.me.sendPatch({
-            'Default:FORTStats_j': JSON.stringify(STATS_HIGH),
-            'Default:CampaignCommanderLoadoutRating_d': POWER_HIGH,
-            'Default:CampaignBackpackRating_d': POWER_HIGH,
+            'Default:FORTStats_j': JSON.stringify(reStats),
+            'Default:CampaignCommanderLoadoutRating_d': rePower,
+            'Default:CampaignBackpackRating_d': rePower,
           } as any);
-          this.sendLog(inst.accountId, 'info', 'HIGH stats re-applied (3s after join)');
+          this.sendLog(inst.accountId, 'info', `PL ${config.powerLevel} stats re-applied (3s after join)`);
         } catch {}
       }, 3000);
 
@@ -972,7 +1016,7 @@ class TaxiManager {
 
     inst.sessionActive = false;
     inst.readyTriggered = false;
-    inst.currentStatsMode = 'normal'; // Reset to normal (HIGH) like reference
+    inst.currentPowerLevel = config.powerLevel; // Reset to configured PL
 
     if (inst.byeTimeout) {
       clearTimeout(inst.byeTimeout);
@@ -1049,8 +1093,8 @@ class TaxiManager {
         try { await inst.client.party.me.setOutfit(config.skin); } catch {}
         try { await inst.client.party.me.setBanner('standardbanner15'); } catch {}
         try { await inst.client.party.me.setLevel(String(config.level)); } catch {}
-        // Always HIGH stats on session start
-        await this.applyStats(inst, 'normal');
+        // Apply configured power level stats on session start
+        await this.applyStats(inst, config.powerLevel);
 
         // Emote
         await new Promise((r) => setTimeout(r, 500));
@@ -1058,13 +1102,14 @@ class TaxiManager {
           if (config.emote) await inst.client.party.me.setEmote(config.emote);
         } catch {}
 
-        // Re-apply HIGH stats after 3s (like reference: ALWAYS STATS_ALTAS)
+        // Re-apply configured power level stats after 3s
         setTimeout(async () => {
           try {
+            const { stats: reStats2, power: rePower2 } = buildStatsForPowerLevel(config.powerLevel);
             await inst.client.party?.me.sendPatch({
-              'Default:FORTStats_j': JSON.stringify(STATS_HIGH),
-              'Default:CampaignCommanderLoadoutRating_d': POWER_HIGH,
-              'Default:CampaignBackpackRating_d': POWER_HIGH,
+              'Default:FORTStats_j': JSON.stringify(reStats2),
+              'Default:CampaignCommanderLoadoutRating_d': rePower2,
+              'Default:CampaignBackpackRating_d': rePower2,
             } as any);
           } catch {}
         }, 3000);
@@ -1093,17 +1138,17 @@ class TaxiManager {
     try { await inst.client.party.me.setOutfit(config.skin); } catch {}
     try { await inst.client.party.me.setBanner('standardbanner15'); } catch {}
     try { await inst.client.party.me.setLevel(String(config.level)); } catch {}
-    await this.applyStats(inst, config.statsMode);
+    await this.applyStats(inst, config.powerLevel);
   }
 
   /**
-   * Apply stats via sendPatch (matches reference colaHelpers.ts exactly).
-   * Uses `as any` cast like the reference.
+   * Apply stats via sendPatch for a given power level.
    */
-  private async applyStats(inst: TaxiClientInstance, mode: 'normal' | 'low'): Promise<void> {
+  private async applyStats(inst: TaxiClientInstance, powerLevel: number): Promise<void> {
     try {
-      const stats = mode === 'low' ? STATS_LOW : STATS_HIGH;
-      const power = mode === 'low' ? POWER_LOW : POWER_HIGH;
+      const { stats, power } = buildStatsForPowerLevel(powerLevel);
+      const fortStat = stats.FORTStats.fortitude;
+      console.log(`[TAXI-STATS] PL=${powerLevel} → stat=${fortStat}, power=${power}`);
 
       await inst.client.party?.me.sendPatch({
         'Default:FORTStats_j': JSON.stringify(stats),

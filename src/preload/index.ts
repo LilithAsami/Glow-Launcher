@@ -103,6 +103,7 @@ contextBridge.exposeInMainWorld('glowAPI', {
   },
   files: {
     getWorldInfo: () => ipcRenderer.invoke('files:get-worldinfo'),
+    workerPower: (targetLevel: number) => ipcRenderer.invoke('files:worker-power', targetLevel),
     save: (jsonString: string, defaultName: string) =>
       ipcRenderer.invoke('files:save', jsonString, defaultName),
     devBuildStatus: () => ipcRenderer.invoke('files:devbuild-status'),
@@ -148,6 +149,10 @@ contextBridge.exposeInMainWorld('glowAPI', {
   mcp: {
     execute: (operation: string, profileId: string) =>
       ipcRenderer.invoke('mcp:execute', operation, profileId),
+  },
+  outpost: {
+    getInfo: () => ipcRenderer.invoke('outpost:info'),
+    getBaseData: (saveFile: string) => ipcRenderer.invoke('outpost:base-data', saveFile),
   },
   stalk: {
     search: (searchTerm: string) =>
@@ -313,5 +318,26 @@ contextBridge.exposeInMainWorld('glowAPI', {
       ipcRenderer.on('autodaily:data-changed', () => cb());
     },
     offDataChanged: () => { ipcRenderer.removeAllListeners('autodaily:data-changed'); },
+  },
+  autoresponder: {
+    getFullStatus: () => ipcRenderer.invoke('autoresponder:get-full-status'),
+    setEnabled: (enabled: boolean) => ipcRenderer.invoke('autoresponder:set-enabled', enabled),
+    addRule: (rule: any) => ipcRenderer.invoke('autoresponder:add-rule', rule),
+    updateRule: (ruleId: string, partial: any) => ipcRenderer.invoke('autoresponder:update-rule', ruleId, partial),
+    deleteRule: (ruleId: string) => ipcRenderer.invoke('autoresponder:delete-rule', ruleId),
+    toggleRule: (ruleId: string, enabled: boolean) => ipcRenderer.invoke('autoresponder:toggle-rule', ruleId, enabled),
+    clearLogs: () => ipcRenderer.invoke('autoresponder:clear-logs'),
+    testPattern: (match: string, pattern: string, testUrl: string) => ipcRenderer.invoke('autoresponder:test-pattern', match, pattern, testUrl),
+    browseFile: () => ipcRenderer.invoke('autoresponder:browse-file'),
+    getTraffic: () => ipcRenderer.invoke('autoresponder:get-traffic'),
+    getTrafficEntry: (entryId: number) => ipcRenderer.invoke('autoresponder:get-traffic-entry', entryId),
+    clearTraffic: () => ipcRenderer.invoke('autoresponder:clear-traffic'),
+    installCert: () => ipcRenderer.invoke('autoresponder:install-cert'),
+    getProxyStatus: () => ipcRenderer.invoke('autoresponder:get-proxy-status'),
+    onTraffic: (cb: (msg: any) => void) => {
+      ipcRenderer.removeAllListeners('autoresponder:traffic');
+      ipcRenderer.on('autoresponder:traffic', (_e, msg) => cb(msg));
+    },
+    offTraffic: () => { ipcRenderer.removeAllListeners('autoresponder:traffic'); },
   },
 });

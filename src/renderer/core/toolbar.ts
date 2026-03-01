@@ -41,6 +41,10 @@ export function initToolbar(router: Router): void {
       </div>
 
       <div class="toolbar-right">
+        <button class="toolbar-btn-discord" id="btn-discord" title="Join our Discord server">
+          <img src="assets/icons/discord.png" alt="Discord" class="toolbar-discord-icon" />
+          <span>Discord Server</span>
+        </button>
         <button class="toolbar-btn-accounts" id="btn-accounts" title="Manage accounts">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
                stroke="currentColor" stroke-width="2" stroke-linecap="round"
@@ -76,6 +80,11 @@ export function initToolbar(router: Router): void {
   // Logo → Home
   document.getElementById('toolbar-logo')?.addEventListener('click', () => {
     router.navigate('home');
+  });
+
+  // Discord button
+  document.getElementById('btn-discord')?.addEventListener('click', () => {
+    window.glowAPI.shell.openExternal('https://discord.gg/SrSMRxfUEj');
   });
 
   // Accounts button → Accounts page

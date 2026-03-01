@@ -4,7 +4,7 @@ let el: HTMLElement | null = null;
 
 // ── State ─────────────────────────────────────────────────────
 let dupeLoading = false;
-let dupeResult: { success: boolean; message: string; storageStatus?: string | null } | null = null;
+let dupeResult: { success: boolean; message: string } | null = null;
 let dupeWaiting = false;
 let dupeTimeRemaining = 0;
 let dupeTotalWait = 0;
@@ -71,11 +71,6 @@ function draw(): void {
               </svg>
               <span>${esc(dupeResult.message)}</span>
             </div>
-            ${dupeResult.storageStatus ? `
-              <div class="dupe-storage">
-                ${dupeResult.storageStatus === 'bugged-with-storage' ? 'Storage: Accessible' : 'Storage: Not accessible'}
-              </div>
-            ` : ''}
             <button class="dupe-btn dupe-btn--primary" id="dupe-execute">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
               Try Again

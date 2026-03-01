@@ -7,7 +7,9 @@ import * as autokick from './events/autokick/monitor';
 import * as security from './helpers/auth/security';
 import * as alerts from './helpers/stw/alerts';
 import * as worldinfo from './helpers/stw/worldinfo';
+import * as workerpower from './helpers/stw/workerpower';
 import * as mcp from './helpers/epic/mcp';
+import * as outpost from './helpers/epic/outpost';
 import * as stalk from './helpers/epic/stalk';
 import * as party from './helpers/epic/party';
 import * as eula from './helpers/epic/eula';
@@ -32,6 +34,7 @@ import * as redeemcodes from './helpers/cmd/redeemcodes';
 import * as xpboosts from './helpers/cmd/xpboosts';
 import * as quests from './helpers/stw/quests';
 import * as autodaily from './events/autodaily/autodaily';
+import * as autoresponder from './managers/autoresponder';
 import * as shop from './managers/shop/ShopManager';
 import * as lockerMgr from './managers/locker/lockerManager';
 import * as accountmgmt from './helpers/epic/accountmgmt';
@@ -200,7 +203,7 @@ export function registerIpcHandlers(storage: Storage): void {
         return { success: true, url: DEFAULT_AVATAR };
       }
 
-      // 2. Fetch avatar from Epic API (exactly like avatarHandler.ts)
+      // 2. Fetch avatar from Epic API
       const avatarUrl = `${Endpoints.ACCOUNT_AVATAR}/fortnite/ids?accountIds=${accountId}`;
       console.log(`[Avatar] Requesting: ${avatarUrl}`);
 
@@ -248,7 +251,7 @@ export function registerIpcHandlers(storage: Storage): void {
         }
       }
 
-      // 3. Build URL (exactly like avatarHandler.ts)
+      // 3. Build URL
       let iconURL: string;
       if (avatarId && avatarId.includes(':')) {
         const idPart = avatarId.split(':')[1];
@@ -341,6 +344,10 @@ export function registerIpcHandlers(storage: Storage): void {
   // ── Files ──────────────────────────────────────────────────
   ipcMain.handle('files:get-worldinfo', async () => {
     return worldinfo.getWorldInfo(storage);
+  });
+
+  ipcMain.handle('files:worker-power', async (_e, targetLevel: number) => {
+    return workerpower.generateWorkerPower(storage, targetLevel);
   });
 
   ipcMain.handle('files:save', async (_e, jsonString: string, defaultName: string) => {
@@ -458,6 +465,15 @@ export function registerIpcHandlers(storage: Storage): void {
   // ── MCP ────────────────────────────────────────────────────
   ipcMain.handle('mcp:execute', async (_e, operation: string, profileId: string) => {
     return mcp.executeMcp(storage, operation, profileId);
+  });
+
+  // ── Outpost Info ───────────────────────────────────────────
+  ipcMain.handle('outpost:info', async () => {
+    return outpost.getOutpostInfo(storage);
+  });
+
+  ipcMain.handle('outpost:base-data', async (_e, saveFile: string) => {
+    return outpost.getOutpostBaseData(storage, saveFile);
   });
 
   // ── Stalk ──────────────────────────────────────────────────
@@ -1085,6 +1101,64 @@ export function registerIpcHandlers(storage: Storage): void {
     return autodaily.runAutoDailyNow(storage);
   });
 
+  // ── AutoResponder ──────────────────────────────────────────
+  ipcMain.handle('autoresponder:get-full-status', () => {
+    return autoresponder.getFullStatus(storage);
+  });
+
+  ipcMain.handle('autoresponder:set-enabled', (_e, enabled: boolean) => {
+    return autoresponder.setEnabled(storage, enabled);
+  });
+
+  ipcMain.handle('autoresponder:add-rule', (_e, rule: any) => {
+    return autoresponder.addRule(storage, rule);
+  });
+
+  ipcMain.handle('autoresponder:update-rule', (_e, ruleId: string, partial: any) => {
+    return autoresponder.updateRule(storage, ruleId, partial);
+  });
+
+  ipcMain.handle('autoresponder:delete-rule', (_e, ruleId: string) => {
+    return autoresponder.deleteRule(storage, ruleId);
+  });
+
+  ipcMain.handle('autoresponder:toggle-rule', (_e, ruleId: string, enabled: boolean) => {
+    return autoresponder.toggleRule(storage, ruleId, enabled);
+  });
+
+  ipcMain.handle('autoresponder:clear-logs', () => {
+    return autoresponder.clearTraffic();
+  });
+
+  ipcMain.handle('autoresponder:test-pattern', (_e, match: string, pattern: string, testUrl: string) => {
+    return autoresponder.testPattern(storage, match as any, pattern, testUrl);
+  });
+
+  ipcMain.handle('autoresponder:browse-file', (e) => {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    return autoresponder.browseFile(win);
+  });
+
+  ipcMain.handle('autoresponder:get-traffic', () => {
+    return autoresponder.getTraffic();
+  });
+
+  ipcMain.handle('autoresponder:get-traffic-entry', (_e, entryId: number) => {
+    return autoresponder.getTrafficEntry(entryId);
+  });
+
+  ipcMain.handle('autoresponder:clear-traffic', () => {
+    return autoresponder.clearTraffic();
+  });
+
+  ipcMain.handle('autoresponder:install-cert', () => {
+    return autoresponder.installCert();
+  });
+
+  ipcMain.handle('autoresponder:get-proxy-status', () => {
+    return autoresponder.getProxyStatus();
+  });
+
   // Init shop refresh timer
   shop.initShopRefreshTimer(storage);
 
@@ -1093,4 +1167,7 @@ export function registerIpcHandlers(storage: Storage): void {
 
   // Init auto-daily scheduler
   autodaily.startAutoDailyScheduler(storage);
+
+  // Init AutoResponder (load saved rules)
+  autoresponder.initialize(storage);
 }

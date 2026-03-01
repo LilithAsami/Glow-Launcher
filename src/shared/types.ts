@@ -127,20 +127,9 @@ export interface SecurityBanStatus {
 export interface StalkMatchmakingResult {
   success: boolean;
   online?: boolean;
+  isHomebase?: boolean;
   displayName?: string;
   accountId?: string;
-  sessionId?: string;
-  ownerId?: string;
-  totalPlayers?: number;
-  maxPlayers?: number | string;
-  started?: boolean;
-  gameType?: string;
-  gameMode?: string;
-  region?: string;
-  subRegion?: string;
-  serverAddress?: string;
-  serverPort?: string;
-  players?: { index: number; accountId: string; displayName: string }[];
   error?: string;
 }
 
@@ -329,6 +318,7 @@ export interface GlowAPI {
   };
   files: {
     getWorldInfo: () => Promise<{ success: boolean; data?: any; missions?: number; alerts?: number; theaters?: number; sizeMB?: string; error?: string }>;
+    workerPower: (targetLevel: number) => Promise<{ success: boolean; data?: any; workerCount?: number; modified?: number; sizeMB?: string; error?: string }>;
     save: (jsonString: string, defaultName: string) => Promise<{ saved: boolean; path?: string }>;
     devBuildStatus: () => Promise<{ found: boolean; activated: boolean; filePath: string | null; error?: string }>;
     devBuildToggle: () => Promise<{ success: boolean; activated?: boolean; message: string }>;
@@ -348,7 +338,7 @@ export interface GlowAPI {
     trapHeightData: () => Promise<{ scale: { blocks: string; hex: string; uu: number }[]; named: { key: string; label: string; hex: string; uu: number }[] }>;
   };
   dupe: {
-    execute: () => Promise<{ success: boolean; message: string; storageStatus?: string | null }>;
+    execute: () => Promise<{ success: boolean; message: string }>;
     onStatus: (cb: (data: any) => void) => void;
     offStatus: () => void;
   };
@@ -421,6 +411,29 @@ export interface GlowAPI {
   mcp: {
     execute: (operation: string, profileId: string) =>
       Promise<{ success: boolean; data?: any; operation?: string; profileId?: string; error?: string }>;
+  };
+  outpost: {
+    getInfo: () => Promise<{
+      success: boolean;
+      zones: {
+        zoneId: string;
+        zoneName: string;
+        level: number;
+        highestEnduranceWave: number;
+        amplifierCount: number;
+        editPermissions: { accountId: string; displayName: string }[];
+        saveFile: string;
+      }[];
+      error?: string;
+    }>;
+    getBaseData: (saveFile: string) => Promise<{
+      success: boolean;
+      structures: { walls: number; floors: number; stairs: number; cones: number; total: number };
+      traps: { displayName: string; iconFile: string; count: number }[];
+      totalTraps: number;
+      warning?: string;
+      error?: string;
+    }>;
   };
   stalk: {
     search: (searchTerm: string) =>
@@ -616,6 +629,64 @@ export interface GlowAPI {
     onDataChanged: (cb: () => void) => void;
     offDataChanged: () => void;
   };
+  autoresponder: {
+    getFullStatus: () => Promise<{
+      enabled: boolean;
+      rules: AutoResponderRule[];
+      interceptedCount: number;
+    }>;
+    setEnabled: (enabled: boolean) => Promise<{ enabled: boolean; port: number; error?: string }>;
+    addRule: (rule: Omit<AutoResponderRule, 'id' | 'createdAt'>) => Promise<AutoResponderRule>;
+    updateRule: (ruleId: string, partial: Partial<Omit<AutoResponderRule, 'id' | 'createdAt'>>) => Promise<AutoResponderRule | null>;
+    deleteRule: (ruleId: string) => Promise<boolean>;
+    toggleRule: (ruleId: string, enabled: boolean) => Promise<boolean>;
+    clearLogs: () => Promise<void>;
+    testPattern: (match: string, pattern: string, testUrl: string) => Promise<{ matches: boolean; error?: string }>;
+    browseFile: () => Promise<string | null>;
+    getTraffic: () => Promise<TrafficEntry[]>;
+    getTrafficEntry: (entryId: number) => Promise<TrafficEntry | null>;
+    clearTraffic: () => Promise<void>;
+    installCert: () => Promise<{ success: boolean; message: string }>;
+    getProxyStatus: () => Promise<{ running: boolean; port: number; certPath: string }>;
+    onTraffic: (cb: (msg: { type: string; entry: TrafficEntry }) => void) => void;
+    offTraffic: () => void;
+  };
+}
+
+// ============================================================
+// AutoResponder types
+// ============================================================
+
+export interface AutoResponderRule {
+  id: string;
+  enabled: boolean;
+  match: 'contains' | 'exact' | 'regex';
+  pattern: string;
+  statusCode: number;
+  contentType: string;
+  body: string;
+  responseFile?: string;
+  label: string;
+  createdAt: number;
+}
+
+export interface TrafficEntry {
+  id: number;
+  url: string;
+  method: string;
+  host: string;
+  protocol: string;
+  resourceType: string;
+  statusCode: number;
+  contentType: string;
+  requestHeaders: Record<string, string>;
+  responseHeaders: Record<string, string>;
+  intercepted: boolean;
+  interceptedBy?: string;
+  responseBody?: string;
+  timestamp: number;
+  completed: boolean;
+  error?: string;
 }
 
 // ============================================================
@@ -725,7 +796,7 @@ export interface TaxiAccountConfig {
   skin: string;
   emote: string;
   level: number;
-  statsMode: 'normal' | 'low';
+  powerLevel: number;
   responsabilityAccepted: boolean;
   autoAcceptFriends: boolean;
 }
