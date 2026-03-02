@@ -651,6 +651,14 @@ export interface GlowAPI {
     onTraffic: (cb: (msg: { type: string; entry: TrafficEntry }) => void) => void;
     offTraffic: () => void;
   };
+  discordRpc: {
+    setPage: (pageId: string) => Promise<void>;
+    setDetail: (detail: string | null) => Promise<void>;
+    setEnabled: (enabled: boolean) => Promise<void>;
+    getStatus: () => Promise<{ connected: boolean; enabled: boolean }>;
+    onStatus: (cb: (data: { connected: boolean; enabled: boolean }) => void) => void;
+    offStatus: () => void;
+  };
 }
 
 // ============================================================

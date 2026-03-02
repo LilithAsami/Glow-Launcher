@@ -7,6 +7,7 @@ interface SettingsData {
   hiddenPages?: string[];
   minimizeToTray?: boolean;
   launchOnStartup?: boolean;
+  discordRpc?: boolean;
 }
 
 /** IDs that the user cannot disable */
@@ -81,6 +82,18 @@ function draw(): void {
 
       <div class="settings-section">
         <h2 class="settings-section-title">Behavior</h2>
+
+        <div class="settings-item">
+          <div class="settings-item-info">
+            <span class="settings-item-label">Discord Rich Presence</span>
+            <span class="settings-item-desc">Show your current activity in Discord (page, actions, status)</span>
+          </div>
+          <label class="settings-toggle">
+            <input type="checkbox" class="settings-toggle-input" id="toggle-discord-rpc"
+              ${settings.discordRpc !== false ? 'checked' : ''} />
+            <span class="settings-toggle-slider"></span>
+          </label>
+        </div>
 
         <div class="settings-item">
           <div class="settings-item-info">
@@ -209,6 +222,14 @@ function bindEvents(): void {
     settings.launchOnStartup = enabled;
     await saveSettings();
     window.glowAPI.settings.notifyStartupChanged(enabled);
+  });
+
+  // Discord RPC toggle
+  document.getElementById('toggle-discord-rpc')?.addEventListener('change', async (e) => {
+    const enabled = (e.target as HTMLInputElement).checked;
+    settings.discordRpc = enabled;
+    await saveSettings();
+    await window.glowAPI.discordRpc.setEnabled(enabled);
   });
 }
 

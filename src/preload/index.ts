@@ -340,4 +340,15 @@ contextBridge.exposeInMainWorld('glowAPI', {
     },
     offTraffic: () => { ipcRenderer.removeAllListeners('autoresponder:traffic'); },
   },
+  discordRpc: {
+    setPage: (pageId: string) => ipcRenderer.invoke('discord-rpc:set-page', pageId),
+    setDetail: (detail: string | null) => ipcRenderer.invoke('discord-rpc:set-detail', detail),
+    setEnabled: (enabled: boolean) => ipcRenderer.invoke('discord-rpc:set-enabled', enabled),
+    getStatus: () => ipcRenderer.invoke('discord-rpc:get-status') as Promise<{ connected: boolean; enabled: boolean }>,
+    onStatus: (cb: (data: { connected: boolean; enabled: boolean }) => void) => {
+      ipcRenderer.removeAllListeners('discord-rpc:status');
+      ipcRenderer.on('discord-rpc:status', (_e, data) => cb(data));
+    },
+    offStatus: () => { ipcRenderer.removeAllListeners('discord-rpc:status'); },
+  },
 });

@@ -45,6 +45,10 @@ export function initToolbar(router: Router): void {
           <img src="assets/icons/discord.png" alt="Discord" class="toolbar-discord-icon" />
           <span>Discord Server</span>
         </button>
+        <div class="toolbar-rpc-status" id="toolbar-rpc-status" title="Discord RPC">
+          <span class="toolbar-rpc-dot toolbar-rpc-dot--off" id="toolbar-rpc-dot"></span>
+          <span class="toolbar-rpc-label" id="toolbar-rpc-label">RPC</span>
+        </div>
         <button class="toolbar-btn-accounts" id="btn-accounts" title="Manage accounts">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
                stroke="currentColor" stroke-width="2" stroke-linecap="round"
@@ -90,6 +94,14 @@ export function initToolbar(router: Router): void {
   // Accounts button → Accounts page
   document.getElementById('btn-accounts')?.addEventListener('click', () => {
     router.navigate('accounts');
+  });
+
+  // Discord RPC status indicator
+  initRpcIndicator();
+
+  // Track page navigation → update Discord presence
+  router.onNavigate((pageId) => {
+    window.glowAPI.discordRpc.setPage(pageId);
   });
 
   // Launch button → Launch game
@@ -226,4 +238,34 @@ async function updateToolbarAvatar(accountId: string): Promise<void> {
   } catch {
     // Keep current avatar
   }
+}
+
+// ── Discord RPC indicator ────────────────────────────────────
+
+function updateRpcIndicator(data: { connected: boolean; enabled: boolean }): void {
+  const wrap = document.getElementById('toolbar-rpc-status');
+  if (!wrap) return;
+
+  // Hide entirely when disabled
+  if (!data.enabled) {
+    wrap.style.display = 'none';
+    return;
+  }
+  wrap.style.display = '';
+
+  const dot = document.getElementById('toolbar-rpc-dot');
+  if (dot) {
+    dot.classList.toggle('toolbar-rpc-dot--on', data.connected);
+    dot.classList.toggle('toolbar-rpc-dot--off', !data.connected);
+  }
+  wrap.title = data.connected ? 'Discord RPC Connected' : 'Discord RPC Disconnected';
+}
+
+function initRpcIndicator(): void {
+  window.glowAPI.discordRpc.getStatus().then((data) => {
+    updateRpcIndicator(data);
+  });
+  window.glowAPI.discordRpc.onStatus((data) => {
+    updateRpcIndicator(data);
+  });
 }

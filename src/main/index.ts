@@ -5,6 +5,7 @@ import { Storage } from './storage';
 import { initAutoKick } from './events/autokick/monitor';
 import { statusManager } from './managers/status/StatusManager';
 import { taxiManager } from './managers/taxi/TaxiManager';
+import { discordRpc } from './managers/discord/DiscordRpcManager';
 import type { AppConfig } from '../shared/types';
 
 let mainWindow: BrowserWindow | null = null;
@@ -93,6 +94,8 @@ async function createWindow(): Promise<void> {
     statusManager.initialize(storage).catch(() => {});
     // Initialize Taxi Manager (reconnects all active taxis)
     taxiManager.initialize(storage).catch(() => {});
+    // Initialize Discord Rich Presence
+    discordRpc.initialize(storage).catch(() => {});
   });
 
   // Persist window bounds on close & handle tray
@@ -151,5 +154,6 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => {
+  discordRpc.destroy();
   if (!tray) app.quit();
 });

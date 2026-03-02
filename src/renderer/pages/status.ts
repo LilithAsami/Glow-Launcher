@@ -281,6 +281,8 @@ export const statusPage: PageDefinition = {
         statusList[idx].isConnected = data.connected;
         if (data.error) statusList[idx].error = data.error;
         else delete statusList[idx].error;
+        const connected = statusList.filter((s) => s.isConnected).length;
+        window.glowAPI.discordRpc.setDetail(connected > 0 ? `${connected} status${connected !== 1 ? 'es' : ''} active` : null);
         draw();
       }
     });

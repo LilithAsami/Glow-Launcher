@@ -153,6 +153,8 @@ function onStatusUpdate(newStatuses: AutoKickStatus[]): void {
     if (idx >= 0) statuses[idx] = s;
     else statuses.push(s);
   }
+  const active = statuses.filter((s) => s.isConnected).length;
+  window.glowAPI.discordRpc.setDetail(active > 0 ? `Monitoring ${active} account${active !== 1 ? 's' : ''}` : null);
   draw();
 }
 

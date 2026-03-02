@@ -368,6 +368,41 @@ html, body {
   display: block;
 }
 
+/* ── Discord RPC status indicator ──────────────────────────── */
+
+.toolbar-rpc-status {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-light);
+  cursor: default;
+  flex-shrink: 0;
+}
+.toolbar-rpc-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  transition: background .3s, box-shadow .3s;
+}
+.toolbar-rpc-dot--on {
+  background: #43b581;
+  box-shadow: 0 0 6px rgba(67, 181, 129, .6);
+}
+.toolbar-rpc-dot--off {
+  background: #72767d;
+}
+.toolbar-rpc-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.3px;
+  line-height: 1;
+}
+
 .header-controls {
   display: flex;
   align-items: center;

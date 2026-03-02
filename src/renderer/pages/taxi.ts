@@ -669,6 +669,8 @@ export const taxiPage: PageDefinition = {
         taxiList[idx].isConnected = data.connected;
         if (data.connected) activatingAccounts.delete(data.accountId);
         if (data.error) (taxiList[idx] as any).error = data.error;
+        const connected = taxiList.filter((t) => t.isConnected).length;
+        window.glowAPI.discordRpc.setDetail(connected > 0 ? `${connected} taxi${connected !== 1 ? 's' : ''} active` : null);
         draw();
       }
     });

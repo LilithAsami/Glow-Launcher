@@ -591,6 +591,7 @@ function bindEvents(): void {
   el.querySelector('[data-confirm-send]')?.addEventListener('click', async () => {
     if (sending || !browserAccountId) return;
     sending = true;
+    window.glowAPI.discordRpc.setDetail('Sending expeditions...');
     draw();
     try {
       const res = await window.glowAPI.expeditions.send(browserAccountId, [sendType], sendAmount);
@@ -607,6 +608,7 @@ function bindEvents(): void {
     }
     sending = false;
     sendModalOpen = false;
+    window.glowAPI.discordRpc.setDetail(null);
     await loadExpeditionList();
   });
 
@@ -614,6 +616,7 @@ function bindEvents(): void {
   el.querySelector('[data-collect-all]')?.addEventListener('click', async () => {
     if (collectingAll || !browserAccountId) return;
     collectingAll = true;
+    window.glowAPI.discordRpc.setDetail('Collecting expeditions...');
     draw();
     try {
       const res = await window.glowAPI.expeditions.collect(browserAccountId);
@@ -626,6 +629,7 @@ function bindEvents(): void {
       }
     } catch {}
     collectingAll = false;
+    window.glowAPI.discordRpc.setDetail(null);
     await loadExpeditionList();
   });
 

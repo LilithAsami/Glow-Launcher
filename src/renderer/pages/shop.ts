@@ -325,8 +325,10 @@ function openBuyConfirm(item: ShopItem, overlay: HTMLElement): void {
     const confirmBtn = overlay.querySelector('#confirm-buy-yes') as HTMLButtonElement;
     confirmBtn.disabled = true;
     confirmBtn.textContent = 'Purchasing...';
+    window.glowAPI.discordRpc.setDetail('Purchasing item...');
 
     const result = await window.glowAPI.shop.buy(item.offerId, item.finalPrice);
+    window.glowAPI.discordRpc.setDetail(null);
     if (result.success) {
       statusEl.innerHTML = `<p class="detail-success">✓ Purchased successfully!</p>`;
       refreshVbucks();
@@ -435,9 +437,11 @@ function openGiftFlow(item: ShopItem, overlay: HTMLElement): void {
     const sendBtn = overlay.querySelector('#confirm-gift-send') as HTMLButtonElement;
     sendBtn.disabled = true;
     sendBtn.textContent = 'Sending...';
+    window.glowAPI.discordRpc.setDetail('Gifting item...');
 
     const message = (statusEl.querySelector('.gift-message-input') as HTMLInputElement)?.value || '';
     const result = await window.glowAPI.shop.gift(item.offerId, selectedFriendId, message, item.finalPrice);
+    window.glowAPI.discordRpc.setDetail(null);
 
     if (result.success) {
       statusEl.innerHTML = `<p class="detail-success">✓ Gift sent successfully!</p>`;

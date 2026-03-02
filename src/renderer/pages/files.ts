@@ -942,6 +942,7 @@ async function loadWorldInfo(): Promise<void> {
   if (loading) return;
   loading = true;
   errorMsg = null;
+  window.glowAPI.discordRpc.setDetail('Generating World Info...');
   draw();
 
   try {
@@ -962,6 +963,7 @@ async function loadWorldInfo(): Promise<void> {
     errorMsg = err.message || 'Unexpected error';
   } finally {
     loading = false;
+    window.glowAPI.discordRpc.setDetail(null);
     draw();
   }
 }
@@ -1002,6 +1004,7 @@ async function loadWorkerPower(): Promise<void> {
   if (wpLoading) return;
   wpLoading = true;
   wpError = null;
+  window.glowAPI.discordRpc.setDetail('Generating Worker Power...');
   draw();
 
   try {
@@ -1022,6 +1025,7 @@ async function loadWorkerPower(): Promise<void> {
     wpError = err.message || 'Unexpected error';
   } finally {
     wpLoading = false;
+    window.glowAPI.discordRpc.setDetail(null);
     draw();
   }
 }

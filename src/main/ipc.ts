@@ -1170,4 +1170,23 @@ export function registerIpcHandlers(storage: Storage): void {
 
   // Init AutoResponder (load saved rules)
   autoresponder.initialize(storage);
+
+  // ── Discord RPC ───────────────────────────────────────────
+  const { discordRpc } = require('./managers/discord/DiscordRpcManager');
+
+  ipcMain.handle('discord-rpc:set-page', (_e, pageId: string) => {
+    discordRpc.setPage(pageId);
+  });
+
+  ipcMain.handle('discord-rpc:set-detail', (_e, detail: string | null) => {
+    discordRpc.setDetail(detail);
+  });
+
+  ipcMain.handle('discord-rpc:set-enabled', async (_e, enabled: boolean) => {
+    await discordRpc.setEnabled(enabled);
+  });
+
+  ipcMain.handle('discord-rpc:get-status', () => {
+    return { connected: discordRpc.isConnected(), enabled: discordRpc.isEnabled() };
+  });
 }
