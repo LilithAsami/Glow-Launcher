@@ -48,6 +48,7 @@ export interface AccountsData {
 export interface AuthUpdate {
   status: 'starting' | 'waiting' | 'processing' | 'success' | 'error';
   verificationUrl?: string;
+  userCode?: string;
   message?: string;
   account?: { accountId: string; displayName: string };
   isUpdate?: boolean;
@@ -84,7 +85,7 @@ export interface AutoKickLogEntry {
   displayName: string;
   type: 'info' | 'success' | 'warn' | 'error';
   message: string;
-  rewards?: Record<string, { name: string; quantity: number }>;
+  rewards?: Record<string, { name: string; quantity: number; icon: string | null }>;
 }
 
 // ============================================================
@@ -236,14 +237,18 @@ export interface GlowAPI {
     getAll: () => Promise<AccountsData>;
     acceptTos: () => Promise<void>;
     startDeviceAuth: () => Promise<void>;
+    startDeviceCode: () => Promise<void>;
     submitExchangeCode: (code: string) => Promise<void>;
+    submitAuthorizationCode: (code: string) => Promise<void>;
     cancelAuth: () => Promise<void>;
+    importFromLaunchers: () => Promise<{ results: Array<{ accountId: string; displayName: string; source: string; status: 'added' | 'existing' | 'error'; message?: string }> }>;
     remove: (accountId: string) => Promise<AccountsData>;
     setMain: (accountId: string) => Promise<AccountsData>;
     reorder: (orderedIds: string[]) => Promise<AccountsData>;
     getAvatar: (accountId: string) => Promise<{ success: boolean; url: string }>;
     getAvatarCached: (accountId: string) => Promise<{ success: boolean; url: string }>;
     getAllAvatars: () => Promise<{ success: boolean; avatars: Record<string, string>; error?: string }>;
+    validateAll: () => Promise<Array<{ accountId: string; displayName: string; valid: boolean }>>;
     onAuthUpdate: (callback: (data: AuthUpdate) => void) => void;
     offAuthUpdate: () => void;
     onDataChanged: (callback: () => void) => void;
@@ -290,14 +295,17 @@ export interface GlowAPI {
   };
   shell: {
     openExternal: (url: string) => Promise<void>;
+    openPath: (p: string) => Promise<void>;
   };
   launch: {
     start: () => Promise<{ success: boolean; message: string }>;
+    kill: () => Promise<{ success: boolean; message: string }>;
     onStatus: (cb: (data: { status: string; message: string }) => void) => void;
     offStatus: () => void;
   };
   dialog: {
     openDirectory: () => Promise<string | null>;
+    openFile: (options?: { title?: string; filters?: { name: string; extensions: string[] }[] }) => Promise<string | null>;
   };
   alerts: {
     getMissions: () => Promise<ZoneMissions[]>;
@@ -318,7 +326,7 @@ export interface GlowAPI {
   };
   files: {
     getWorldInfo: () => Promise<{ success: boolean; data?: any; missions?: number; alerts?: number; theaters?: number; sizeMB?: string; error?: string }>;
-    workerPower: (targetLevel: number) => Promise<{ success: boolean; data?: any; workerCount?: number; modified?: number; sizeMB?: string; error?: string }>;
+    workerPower: (targetLevel: number) => Promise<{ success: boolean; data?: any; workerCount?: number; heroCount?: number; modified?: number; sizeMB?: string; error?: string }>;
     save: (jsonString: string, defaultName: string) => Promise<{ saved: boolean; path?: string }>;
     devBuildStatus: () => Promise<{ found: boolean; activated: boolean; filePath: string | null; error?: string }>;
     devBuildToggle: () => Promise<{ success: boolean; activated?: boolean; message: string }>;
@@ -336,6 +344,9 @@ export interface GlowAPI {
     trapHeightModifiedTraps: () => Promise<{ guid: string; name: string; currentHeight: string; desc: string; rarity: string; tier: string }[]>;
     trapHeightFamilyInfo: () => Promise<Record<string, { key: string; category: string; defaultHeight: { hex: string; uu: number }; insideFloor: { hex: string; uu: number } | null; heightSupported: boolean; heightOffset: number }>>;
     trapHeightData: () => Promise<{ scale: { blocks: string; hex: string; uu: number }[]; named: { key: string; label: string; hex: string; uu: number }[] }>;
+    fovStatus: () => Promise<{ found: boolean; currentByte: number | null; currentFov: number | null; filePath: string | null; error?: string }>;
+    fovApply: (fovValue: number) => Promise<{ success: boolean; message: string; currentFov?: number }>;
+    fovRestore: () => Promise<{ success: boolean; message: string; currentFov?: number }>;
   };
   dupe: {
     execute: () => Promise<{ success: boolean; message: string }>;
@@ -659,6 +670,102 @@ export interface GlowAPI {
     onStatus: (cb: (data: { connected: boolean; enabled: boolean }) => void) => void;
     offStatus: () => void;
   };
+  notifications: {
+    getAll: () => Promise<any[]>;
+    getUnreadCount: () => Promise<number>;
+    markRead: (id: string) => Promise<void>;
+    markAllRead: () => Promise<void>;
+    clearAll: () => Promise<void>;
+    delete: (id: string) => Promise<void>;
+    getSettings: () => Promise<any>;
+    updateSettings: (partial: any) => Promise<any>;
+    onNew: (cb: (notif: any) => void) => void;
+    offNew: () => void;
+    onUpdated: (cb: (data: { unreadCount: number; total: number }) => void) => void;
+    offUpdated: () => void;
+  };
+  llamas: {
+    get: (accountId: string) => Promise<{
+      success: boolean;
+      llamas?: { templateId: string; name: string; quantity: number; itemIds: string[]; type: 'voucher' | 'cardpack' }[];
+      error?: string;
+    }>;
+    open: (accountId: string, templateId: string, type: string, count: number, itemIds: string[]) => Promise<{
+      success: boolean;
+      opened?: number;
+      error?: string;
+    }>;
+    onLog: (cb: (entry: { level: string; account: string; message: string; timestamp: number }) => void) => void;
+    offLog: () => void;
+  };
+  memory: {
+    getUsage: () => Promise<{ heapUsed: number; heapTotal: number; rss: number }>;
+    cleanup: () => Promise<{ success: boolean }>;
+    restartTimer: () => void;
+  };
+  gifts: {
+    getInfo: () => Promise<{
+      success: boolean;
+      numReceived: number;
+      senders: Array<{
+        accountId: string;
+        displayName: string;
+        lastGiftDate: string | null;
+        cosmetics: Array<{ templateId: string; creationTime: string | null }>;
+      }>;
+      displayName: string;
+      error?: string;
+    }>;
+  };
+  fnlaunch: {
+    getGameSettings: () => Promise<any>;
+    saveGameSettings: (partial: any) => Promise<{ success: boolean; error?: string }>;
+    getLaunchSettings: () => Promise<any>;
+    saveLaunchSettings: (settings: any) => Promise<void>;
+  };
+  library: {
+    getGames: () => Promise<{ success: boolean; games: LibraryGame[]; error?: string }>;
+    getMetadata: (items: Array<{ namespace: string; catalogItemId: string }>) => Promise<{ success: boolean; metadata: Record<string, { title: string; tall: string; wide: string }> }>;
+    launchGame: (namespace: string, catalogItemId: string, appName: string) => Promise<{ success: boolean; error?: string }>;
+    toggleFavorite: (appId: string) => Promise<boolean>;
+  };
+  store: {
+    getFreeGames: () => Promise<{ success: boolean; current: StoreGame[]; upcoming: StoreGame[]; error?: string }>;
+  };
+}
+
+// ============================================================
+// Library types
+// ============================================================
+
+export interface LibraryGame {
+  id: string;
+  namespace: string;
+  catalogItemId: string;
+  title: string;
+  images: { tall: string; wide: string };
+  installed: boolean;
+  installSize: number;
+  installPath: string;
+  favorite: boolean;
+}
+
+// ============================================================
+// Store types
+// ============================================================
+
+export interface StoreGame {
+  id: string;
+  title: string;
+  description: string;
+  seller: string;
+  images: { tall: string; wide: string; thumbnail: string };
+  slug: string;
+  originalPrice: string;
+  currentPrice: string;
+  isFree: boolean;
+  freeUntil: string;
+  url: string;
 }
 
 // ============================================================
@@ -707,20 +814,30 @@ export interface QuestObjective {
   max: number | null;
 }
 
+export interface QuestRewardItem {
+  templateId: string;
+  name: string;
+  quantity: number;
+  icon: string | null;
+}
+
 export interface QuestInfo {
   itemId: string;
   templateId: string;
   questKey: string;
-  category: 'Dailies' | 'Wargames' | 'Endurance' | 'Weekly Mythic' | 'Others';
+  category: string;
   name: string;
   state: string;
   objectives: QuestObjective[];
   canReroll: boolean;
+  image: string | null;
+  rewards: QuestRewardItem[];
 }
 
 export interface QuestsResult {
   success: boolean;
   quests?: QuestInfo[];
+  dailyRerolls?: number;
   error?: string;
 }
 

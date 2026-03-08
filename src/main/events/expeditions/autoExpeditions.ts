@@ -13,6 +13,7 @@ import type { AccountsData } from '../../../shared/types';
 import { refreshAccountToken } from '../../helpers/auth/tokenRefresh';
 import expeditionManager from '../../managers/expeditions';
 import { getCampaignData } from '../../managers/expeditions/helpers';
+import { notificationManager } from '../../managers/notifications/NotificationManager';
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -237,6 +238,7 @@ export async function runExpeditionCycle(
             message: `Sent ${sendResult.summary.totalSent} expedition(s)`,
             timestamp: Date.now(),
           });
+          notificationManager.push('expeditions', 'Auto-Expeditions', `${displayName} — sent ${sendResult.summary.totalSent} expedition(s)`);
         } else {
           sendLog({
             accountId, displayName, type: 'info',

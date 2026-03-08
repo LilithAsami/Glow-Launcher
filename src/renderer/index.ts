@@ -9,6 +9,10 @@ import { tryShowTutorial } from './core/tutorial';
 const router = new Router();
 
 document.addEventListener('DOMContentLoaded', async () => {
+  // Apply minimalist mode early so layout doesn't flash
+  const savedSettings = await window.glowAPI.storage.get<{ minimalist?: boolean }>('settings');
+  if (savedSettings?.minimalist) document.body.classList.add('minimalist');
+
   initHeader();
   initToolbar(router);
   await initSidebar(sidebarGroups, pages, router);

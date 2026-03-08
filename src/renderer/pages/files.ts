@@ -23,10 +23,18 @@ let airLoading = false;
 let airActivated: boolean | null = null;
 let airError: string | null = null;
 
+// ── FOV Patcher state ─────────────────────────────────────────
+let fovLoading = false;
+let fovCurrentFov: number | null = null;
+let fovCurrentByte: number | null = null;
+let fovFound: boolean | null = null;
+let fovError: string | null = null;
+let fovInputValue = 100;
+
 // ── Worker Power state ────────────────────────────────────────
 let wpLoading = false;
 let wpData: any = null;
-let wpStats: { workerCount: number; modified: number; sizeMB: string } | null = null;
+let wpStats: { workerCount: number; heroCount: number; modified: number; sizeMB: string } | null = null;
 let wpError: string | null = null;
 let wpMode: 'high' | 'low' = 'high';
 
@@ -582,6 +590,10 @@ function draw(): void {
                   <span class="files-stat-label">Workers</span>
                 </div>
                 <div class="files-stat">
+                  <span class="files-stat-value">${wpStats?.heroCount ?? 0}</span>
+                  <span class="files-stat-label">Heroes</span>
+                </div>
+                <div class="files-stat">
                   <span class="files-stat-value">${wpStats?.modified ?? 0}</span>
                   <span class="files-stat-label">Modified</span>
                 </div>
@@ -758,6 +770,62 @@ function draw(): void {
           </div>
         </div>
 
+        <!-- FOV Patcher Card -->
+        <div class="files-card files-card--deco" id="files-fov-card">
+          <div class="files-card-icon ${fovFound && fovCurrentFov !== null && fovCurrentFov !== 80 ? 'files-card-icon--active' : ''}">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/><line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="2" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="22" y2="12"/>
+            </svg>
+          </div>
+          <div class="files-card-body">
+            <h3 class="files-card-title">FOV Patcher</h3>
+            <p class="files-card-desc">Change field of view. Default is 80.</p>
+
+            ${fovLoading ? `
+              <div class="files-card-loading">
+                <div class="files-spinner"></div>
+                <span>Processing...</span>
+              </div>
+            ` : fovError ? `
+              <div class="files-card-error">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+                <span>${esc(fovError)}</span>
+              </div>
+              <button class="files-btn files-btn--primary" id="files-fov-check">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+                Retry
+              </button>
+            ` : fovFound !== null ? `
+              <div class="files-devbuilds-status">
+                <span class="files-devbuilds-badge ${fovCurrentFov !== null && fovCurrentFov !== 80 ? 'files-devbuilds-badge--on' : 'files-devbuilds-badge--off'}">
+                  FOV: ${fovCurrentFov !== null ? fovCurrentFov : `Custom (0x${(fovCurrentByte ?? 0).toString(16).toUpperCase()})`}
+                </span>
+              </div>
+              <div class="files-fov-controls" style="display:flex;gap:8px;align-items:center;margin-top:8px;">
+                <input type="number" id="files-fov-input" class="files-fov-input"
+                  min="60" max="170" step="1" value="${fovInputValue}"
+                  style="width:70px;padding:4px 8px;border-radius:6px;border:1px solid rgba(255,255,255,.12);background:rgba(0,0,0,.3);color:#fff;font-size:13px;text-align:center;" />
+                <button class="files-btn files-btn--primary" id="files-fov-apply">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+                  Apply
+                </button>
+                <button class="files-btn files-btn--danger" id="files-fov-restore" title="Restore default FOV (80)">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+                  Restore
+                </button>
+                <button class="files-btn files-btn--ghost" id="files-fov-check" title="Re-check status">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+                </button>
+              </div>
+            ` : `
+              <button class="files-btn files-btn--primary" id="files-fov-check">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                Check Status
+              </button>
+            `}
+          </div>
+        </div>
+
       </div>
 
       ${renderTrapSection()}
@@ -844,6 +912,20 @@ function bindEvents(): void {
 
   const airToggleBtn = el.querySelector('#files-airstrike-toggle') as HTMLButtonElement | null;
   airToggleBtn?.addEventListener('click', () => toggleAirStrike());
+
+  // ── FOV Patcher ──────────────────────────────────────────
+  const fovCheckBtn = el.querySelector('#files-fov-check') as HTMLButtonElement | null;
+  fovCheckBtn?.addEventListener('click', () => checkFovStatus());
+
+  const fovApplyBtn = el.querySelector('#files-fov-apply') as HTMLButtonElement | null;
+  fovApplyBtn?.addEventListener('click', () => {
+    const input = el?.querySelector('#files-fov-input') as HTMLInputElement | null;
+    if (input) fovInputValue = Math.max(60, Math.min(170, parseInt(input.value, 10) || 100));
+    applyFov(fovInputValue);
+  });
+
+  const fovRestoreBtn = el.querySelector('#files-fov-restore') as HTMLButtonElement | null;
+  fovRestoreBtn?.addEventListener('click', () => restoreFov());
 
   // ── Trap Height ──────────────────────────────────────────
   const trapLoadBtn = el.querySelector('#files-trap-load') as HTMLButtonElement | null;
@@ -1014,6 +1096,7 @@ async function loadWorkerPower(): Promise<void> {
       wpData = result.data;
       wpStats = {
         workerCount: result.workerCount ?? 0,
+        heroCount: result.heroCount ?? 0,
         modified: result.modified ?? 0,
         sizeMB: result.sizeMB ?? '0',
       };
@@ -1195,6 +1278,79 @@ async function toggleAirStrike(): Promise<void> {
     airError = err.message || 'Unexpected error';
   } finally {
     airLoading = false;
+    draw();
+  }
+}
+
+// ─── FOV Patcher Actions ─────────────────────────────────────
+
+async function checkFovStatus(): Promise<void> {
+  if (fovLoading) return;
+  fovLoading = true;
+  fovError = null;
+  draw();
+
+  try {
+    const result = await window.glowAPI.files.fovStatus();
+    if (result.found) {
+      fovFound = true;
+      fovCurrentFov = result.currentFov;
+      fovCurrentByte = result.currentByte;
+      fovError = null;
+    } else {
+      fovFound = null;
+      fovError = result.error || 'Pattern not found';
+    }
+  } catch (err: any) {
+    fovError = err.message || 'Error checking FOV status';
+  } finally {
+    fovLoading = false;
+    draw();
+  }
+}
+
+async function applyFov(value: number): Promise<void> {
+  if (fovLoading) return;
+  fovLoading = true;
+  fovError = null;
+  draw();
+
+  try {
+    const result = await window.glowAPI.files.fovApply(value);
+    if (result.success) {
+      fovCurrentFov = result.currentFov ?? value;
+      fovError = null;
+      fovFound = true;
+    } else {
+      fovError = result.message;
+    }
+  } catch (err: any) {
+    fovError = err.message || 'Error applying FOV';
+  } finally {
+    fovLoading = false;
+    draw();
+  }
+}
+
+async function restoreFov(): Promise<void> {
+  if (fovLoading) return;
+  fovLoading = true;
+  fovError = null;
+  draw();
+
+  try {
+    const result = await window.glowAPI.files.fovRestore();
+    if (result.success) {
+      fovCurrentFov = result.currentFov ?? 80;
+      fovError = null;
+      fovFound = true;
+    } else {
+      fovError = result.message;
+    }
+  } catch (err: any) {
+    fovError = err.message || 'Error restoring FOV';
+  } finally {
+    fovLoading = false;
     draw();
   }
 }

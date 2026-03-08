@@ -590,18 +590,18 @@ class TaxiManager {
 
     // Apply cosmetics right after login (like the reference: party.me.setOutfit, setBanner, setLevel)
     try {
-      await client.party.me.setOutfit(config.skin);
+      await inst.client.party.me.setOutfit(config.skin);
       this.sendLog(accountId, 'info', `Skin set: ${config.skin}`);
     } catch (e: any) {
       this.sendLog(accountId, 'warn', `Failed to set skin after login: ${e?.message}`);
     }
 
     try {
-      await client.party.me.setBanner('standardbanner15');
+      await inst.client.party.me.setBanner('standardbanner15');
     } catch {}
 
     try {
-      await client.party.me.setLevel(String(config.level));
+      await inst.client.party.me.setLevel(String(config.level));
       this.sendLog(accountId, 'info', `Level set: ${config.level}`);
     } catch (e: any) {
       this.sendLog(accountId, 'warn', `Failed to set level after login: ${e?.message}`);

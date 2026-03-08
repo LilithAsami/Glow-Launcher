@@ -73,14 +73,26 @@ function buildSteps(router: Router): TutorialStep[] {
       title: 'Launch Game',
       desc: 'Press this button to start Fortnite directly. Make sure the installation path is configured in Settings.',
     },
-    // 4 — Accounts button
+    // 4 — Toolbar right actions
+    {
+      target: '.toolbar-right',
+      title: 'Toolbar Actions',
+      desc: 'From left to right: Discord RPC status, notifications bell, Discord server link, settings, and account manager. All buttons are round icons for a clean look.',
+      before: () => { /* just highlight */ },
+    },
+    // 5 — Settings button
+    {
+      target: '#btn-settings',
+      title: 'Quick Settings',
+      desc: 'Click the gear icon to jump directly to the Settings page where you can configure your Fortnite path, page backgrounds, sidebar pages, and more.',
+    },
+    // 6 — Accounts button
     {
       target: '#btn-accounts',
       title: 'Accounts Manager',
       desc: 'Open the Accounts page to add, remove, or reorder your Epic Games accounts. You can drag accounts to change their order.',
-      before: () => { /* just highlight, don't navigate */ },
     },
-    // 5 — Navigate to Accounts
+    // 7 — Navigate to Accounts
     {
       target: '.accounts-list',
       title: 'Drag to Reorder',
@@ -93,7 +105,7 @@ function buildSteps(router: Router): TutorialStep[] {
         injectTutorialAccounts();
       },
     },
-    // 6 — Sidebar
+    // 8 — Sidebar
     {
       target: '#sidebar',
       title: 'Sidebar Navigation',
@@ -103,32 +115,25 @@ function buildSteps(router: Router): TutorialStep[] {
         router.navigate('home');
       },
     },
-    // 7 — A sidebar group
+    // 9 — A sidebar group
     {
       target: '.sidebar-group-header',
       title: 'Page Groups',
-      desc: 'Pages are organized into groups. Each group header tells you the category. Scroll down to see more pages.',
+      desc: 'Click a group header to collapse or expand it. Groups stay collapsed between sessions. Scroll down to see more pages.',
     },
-    // 8 — Sidebar buttons
+    // 10 — Sidebar buttons
     {
       target: '.sidebar-btn',
       title: 'Sidebar Buttons',
-      desc: 'Each icon represents a feature page. Hover for a tooltip, click to navigate. You can show/hide pages from Settings.',
+      desc: 'Each icon represents a feature page. Hover for a tooltip, click to navigate. Right-click any button to hide it from the sidebar.',
     },
-    // 9 — Navigate to Settings
-    {
-      target: '.sidebar-btn[data-page-id="settings"]',
-      title: 'Settings',
-      desc: 'Here you can configure your Fortnite path, toggle sidebar pages on/off, enable minimize-to-tray, and configure startup options.',
-      before: () => { router.navigate('settings'); },
-    },
-    // 10 — Window controls
+    // 11 — Window controls
     {
       target: '.header-controls',
       title: 'Window Controls',
       desc: 'Minimize, maximize, or close the window. If "Minimize to Tray" is enabled in Settings, closing will hide the app to the system tray instead.',
     },
-    // 11 — Done
+    // 12 — Done
     {
       target: null,
       title: 'You\'re all set!',

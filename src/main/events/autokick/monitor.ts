@@ -23,6 +23,7 @@ import { isInSTWMission, getMCPMatchesPlayed, fetchPartyMeta, waitForMissionComp
 import { processSTWRewards } from '../../helpers/autokick/rewardsProcessor';
 import { transferMaterials } from '../../helpers/autokick/materialsTransfer';
 import { PartyManager } from '../../managers/party/PartyManager';
+import { notificationManager } from '../../managers/notifications/NotificationManager';
 import type { Storage } from '../../storage';
 import type { AccountsData, AutoKickData, AutoKickAccountConfig, AutoKickStatus } from '../../../shared/types';
 
@@ -483,6 +484,21 @@ async function executeAutoKickActions(
         message: count > 0 ? `Collected ${count} reward type(s)` : 'No rewards to collect',
         rewards,
       });
+
+      // Push rich notification with reward items (icons + quantities)
+      if (count > 0) {
+        const rewardItems = Object.values(rewards).map((r) => ({
+          name: r.name,
+          quantity: r.quantity,
+          icon: r.icon,
+        }));
+        notificationManager.push(
+          'autokick',
+          'AutoKick — Rewards',
+          `${displayName} — collected ${count} reward(s)`,
+          rewardItems,
+        );
+      }
     } catch (err: any) {
       send('autokick:log', { accountId, displayName, type: 'error', message: `Rewards error: ${err?.message}` });
     }
@@ -519,6 +535,11 @@ async function executeAutoKickActions(
         type: 'info',
         message: members.length > 0 ? `Kicked ${members.length} member(s)` : 'No members to kick',
       });
+
+      // Push notification for kicks
+      if (members.length > 0) {
+        notificationManager.push('autokick', 'AutoKick', `${displayName} — kicked ${members.length} member(s)`);
+      }
     } catch (err: any) {
       send('autokick:log', { accountId, displayName, type: 'error', message: `Kick error: ${err?.message}` });
     }

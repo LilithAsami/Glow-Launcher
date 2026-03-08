@@ -9,11 +9,9 @@ import { vbucksPage } from './vbucks';
 import { epicStatusPage } from './epicstatus';
 import { lockerPage } from './locker';
 import { mcpPage } from './mcp';
-import { securityPage } from './security';
 import { settingsPage } from './settings';
 import { stalkPage } from './stalk';
 import { partyPage } from './party';
-import { eulaPage } from './eula';
 import { authPageDef } from './authPage';
 import { statusPage } from './status';
 import { taxiPage } from './taxi';
@@ -22,11 +20,15 @@ import { ghostequipPage } from './ghostequip';
 import { friendsPage } from './friends';
 import { redeemCodesPage } from './redeemcodes';
 import { xpBoostsPage } from './xpboosts';
-import { accountMgmtPage } from './accountmgmt';
 import { questsPage } from './quests';
 import { autodailyPage } from './autodaily';
 import { autoresponderPage } from './autoresponder';
 import { outpostPage } from './outpost';
+import { llamasPage } from './llamas';
+import { epicAccountPage } from './epicaccount';
+import { giftsPage } from './gifts';
+import { fnlaunchPage } from './fnlaunch';
+import { libraryPage } from './library';
 
 // ============================================================
 //  PAGE REGISTRY  (sidebar pages only)
@@ -50,49 +52,61 @@ export interface SidebarGroup {
 
 export const sidebarGroups: SidebarGroup[] = [
   {
-    label: 'BR-STW',
+    label: 'STW',
     pages: [
-      shopPage,
-      lockerPage,
       alertsPage,
+      llamasPage,
       questsPage,
       dupePage,
-      vbucksPage,
-      ghostequipPage,
       partyPage,
       xpBoostsPage,
-      mcpPage,
       stalkPage,
       outpostPage,
     ],
   },
   {
-    label: 'Automated Systems',
+    label: 'AUTOMATED SYSTEMS',
     pages: [
       filesPage,
       taxiPage,
       autokickPage,
       autodailyPage,
       expeditionsPage,
-      autoresponderPage,
       statusPage,
+      autoresponderPage,
     ],
   },
   {
-    label: 'Epic Games',
+    label: 'EPIC GAMES',
     pages: [
       friendsPage,
-      securityPage,
+      epicAccountPage,
       epicStatusPage,
-      eulaPage,
       redeemCodesPage,
-      accountMgmtPage,
+    ],
+  },
+  {
+    label: 'BR',
+    pages: [
+      shopPage,
+      lockerPage,
+      vbucksPage,
+      giftsPage,
+      ghostequipPage,
+    ],
+  },
+    {
+    label: 'UTILITY',
+    pages: [
+      fnlaunchPage,
+      mcpPage,
       authPageDef,
+      libraryPage,
     ],
   },
 ];
 
-// Flat array for the router — all sidebar pages + settings at the bottom
+// Flat array for the router — all sidebar pages + settings (hidden, accessed via toolbar)
 export const pages: PageDefinition[] = [
   ...sidebarGroups.flatMap((g) => g.pages),
   settingsPage,

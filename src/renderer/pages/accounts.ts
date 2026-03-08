@@ -1,15 +1,19 @@
 import type { PageDefinition, AccountsData, AuthUpdate } from '../../shared/types';
+import { invalidAccounts } from '../core/toolbar';
 
 const TOS_URL = 'https://drive.google.com/file/d/1jGCV_duxccWJo9n9dCt_eGf0iJ-CtFgz/view?usp=sharing';
 const EXCHANGE_CODE_URL = 'https://www.epicgames.com/id/api/redirect?clientId=3f69e56c7649492c8cc29f1af08a8a12&responseType=code';
+const AUTH_CODE_URL = 'https://www.epicgames.com/id/api/redirect?clientId=3f69e56c7649492c8cc29f1af08a8a12&responseType=code';
 const MAX_ACCOUNTS = 25;
 
-type View = 'loading' | 'tos' | 'list' | 'choose-method' | 'device-auth' | 'exchange-input' | 'processing' | 'success' | 'error';
+type View = 'loading' | 'tos' | 'list' | 'choose-method' | 'device-auth' | 'device-code' | 'exchange-input' | 'auth-code-input' | 'processing' | 'success' | 'error' | 'import-launchers' | 'import-results';
 
 let view: View = 'loading';
 let el: HTMLElement | null = null;
 let data: AccountsData = { tosAccepted: false, accounts: [] };
 let result: { displayName?: string; isUpdate?: boolean; message?: string } = {};
+let importResults: Array<{ accountId: string; displayName: string; source: string; status: 'added' | 'existing' | 'error'; message?: string }> = [];
+let deviceCodeData: { url: string; userCode: string } = { url: '', userCode: '' };
 
 // ─── State Machine ───────────────────────────────────────────
 
@@ -22,15 +26,19 @@ function go(newView: View, extra?: Partial<typeof result>): void {
 function draw(): void {
   if (!el) return;
   const r: Record<View, () => void> = {
-    'loading':        drawLoading,
-    'tos':            drawTos,
-    'list':           drawList,
-    'choose-method':  drawChooseMethod,
-    'device-auth':    drawDeviceAuth,
-    'exchange-input': drawExchangeInput,
-    'processing':     drawProcessing,
-    'success':        drawSuccess,
-    'error':          drawError,
+    'loading':          drawLoading,
+    'tos':              drawTos,
+    'list':             drawList,
+    'choose-method':    drawChooseMethod,
+    'device-auth':      drawDeviceAuth,
+    'device-code':      drawDeviceCode,
+    'exchange-input':   drawExchangeInput,
+    'auth-code-input':  drawAuthCodeInput,
+    'processing':       drawProcessing,
+    'success':          drawSuccess,
+    'error':            drawError,
+    'import-launchers': drawImportLaunchers,
+    'import-results':   drawImportResults,
   };
   r[view]();
 }
@@ -42,7 +50,12 @@ function handleAuthUpdate(update: AuthUpdate): void {
     case 'starting':
       break;
     case 'waiting':
-      go('device-auth');
+      if (update.userCode) {
+        deviceCodeData = { url: update.verificationUrl ?? '', userCode: update.userCode };
+        go('device-code');
+      } else {
+        go('device-auth');
+      }
       break;
     case 'processing':
       go('processing');
@@ -111,8 +124,10 @@ function drawList(): void {
          <p class="empty-text">No accounts registered yet</p>
          <p class="empty-subtext">Add your first Epic Games account to get started</p>
        </div>`
-    : data.accounts.map((acc) => `
-        <div class="account-card ${acc.isMain ? 'account-card-active' : ''}" draggable="true" data-account-id="${acc.accountId}">
+    : data.accounts.map((acc) => {
+        const authExpired = invalidAccounts.has(acc.accountId);
+        return `
+        <div class="account-card ${acc.isMain ? 'account-card-active' : ''} ${authExpired ? 'account-card-expired' : ''}" draggable="true" data-account-id="${acc.accountId}">
           <div class="account-drag-handle" title="Drag to reorder">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
               <circle cx="9" cy="6" r="1.5"/><circle cx="15" cy="6" r="1.5"/>
@@ -125,8 +140,8 @@ function drawList(): void {
           </div>
           <div class="account-info">
             <span class="account-name">${acc.displayName}</span>
-            <span class="account-status ${acc.isMain ? '' : 'account-status-inactive'}">
-              ${acc.isMain ? 'Active' : 'Inactive'}
+            <span class="account-status ${acc.isMain ? '' : 'account-status-inactive'} ${authExpired ? 'account-status-expired' : ''}">
+              ${authExpired ? '⚠ Auth expired' : (acc.isMain ? 'Active' : 'Inactive')}
             </span>
           </div>
           <div class="account-actions">
@@ -157,7 +172,8 @@ function drawList(): void {
             `}
           </div>
         </div>
-      `).join('');
+      `;
+      }).join('');
 
   const canAdd = data.accounts.length < MAX_ACCOUNTS;
 
@@ -267,11 +283,35 @@ function drawChooseMethod(): void {
           </div>
         </button>
 
-        <button class="method-card" id="method-exchange">
+        <button class="method-card" id="method-device-code">
+          <div class="method-icon">📱</div>
+          <div class="method-info">
+            <h3 class="method-title">Device Code</h3>
+            <p class="method-desc">Shows a code and URL you can enter from any device or browser without auto-opening.</p>
+          </div>
+        </button>
+
+        <button class="method-card" id="method-authcode">
           <div class="method-icon">🔑</div>
+          <div class="method-info">
+            <h3 class="method-title">Authorization Code</h3>
+            <p class="method-desc">Log in via Epic Games and paste the authorization code shown on the page.</p>
+          </div>
+        </button>
+
+        <button class="method-card" id="method-exchange">
+          <div class="method-icon">🔐</div>
           <div class="method-info">
             <h3 class="method-title">Exchange Code</h3>
             <p class="method-desc">Paste an exchange code manually. For advanced users.</p>
+          </div>
+        </button>
+
+        <button class="method-card" id="method-import">
+          <div class="method-icon">📦</div>
+          <div class="method-info">
+            <h3 class="method-title">Import from Launchers</h3>
+            <p class="method-desc">Auto-detect accounts from Aerial and Spitfire launchers installed on this PC.</p>
           </div>
         </button>
       </div>
@@ -284,8 +324,18 @@ function drawChooseMethod(): void {
     go('device-auth');
     await window.glowAPI.accounts.startDeviceAuth();
   });
+  el!.querySelector('#method-device-code')?.addEventListener('click', async () => {
+    go('processing');
+    await window.glowAPI.accounts.startDeviceCode();
+  });
+  el!.querySelector('#method-authcode')?.addEventListener('click', () => {
+    go('auth-code-input');
+  });
   el!.querySelector('#method-exchange')?.addEventListener('click', () => {
     go('exchange-input');
+  });
+  el!.querySelector('#method-import')?.addEventListener('click', () => {
+    go('import-launchers');
   });
   el!.querySelector('#btn-back')?.addEventListener('click', () => {
     go('list');
@@ -315,6 +365,44 @@ function drawDeviceAuth(): void {
   });
 }
 
+function drawDeviceCode(): void {
+  el!.innerHTML = `
+    <div class="auth-state">
+      <div class="auth-pulse">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none"
+             stroke="var(--accent)" stroke-width="2" stroke-linecap="round">
+          <circle cx="12" cy="12" r="10"/>
+          <polyline points="12 6 12 12 16 14"/>
+        </svg>
+      </div>
+      <h2 class="auth-state-title">Activate your device</h2>
+      <p class="auth-state-text">Visit the URL below and enter the code when prompted.</p>
+      <div class="device-code-box">
+        <div class="device-code-url">${deviceCodeData.url}</div>
+        <div class="device-code-user-code">${deviceCodeData.userCode}</div>
+        <button class="btn btn-ghost device-code-copy" id="btn-copy-code">Copy code</button>
+      </div>
+      <button class="btn btn-accent" id="btn-open-browser" style="margin-top:8px">Open in Browser ↗</button>
+      <p class="auth-state-hint" style="margin-top:12px">This will time out after 5 minutes.</p>
+      <button class="btn btn-ghost" id="btn-cancel-auth">Cancel</button>
+    </div>
+  `;
+
+  el!.querySelector('#btn-copy-code')?.addEventListener('click', () => {
+    navigator.clipboard.writeText(deviceCodeData.userCode).then(() => {
+      const btn = el!.querySelector('#btn-copy-code') as HTMLButtonElement;
+      if (btn) { btn.textContent = 'Copied!'; setTimeout(() => { btn.textContent = 'Copy code'; }, 1500); }
+    });
+  });
+  el!.querySelector('#btn-open-browser')?.addEventListener('click', () => {
+    window.glowAPI.shell.openExternal(deviceCodeData.url);
+  });
+  el!.querySelector('#btn-cancel-auth')?.addEventListener('click', async () => {
+    await window.glowAPI.accounts.cancelAuth();
+    go('choose-method');
+  });
+}
+
 function drawExchangeInput(): void {
   el!.innerHTML = `
     <div class="page-accounts">
@@ -322,8 +410,7 @@ function drawExchangeInput(): void {
       <p class="page-subtitle">Enter your Epic Games exchange code</p>
 
       <div class="exchange-form">
-        <p class="exchange-hint">Click the link below, log in with your Epic Games account, and copy the code shown on the page.</p>
-        <button class="tos-link-btn" id="btn-get-code">Get Exchange Code ↗</button>
+        <p class="exchange-hint">Paste an exchange code obtained from another source (API tools, scripts, other launchers). Exchange codes cannot be generated directly from a browser link — use <strong>Authorization Code</strong> for browser login instead.</p>
         <div class="exchange-input-wrap">
           <input type="text" class="exchange-input" id="exchange-code-input"
                  placeholder="Paste your exchange code here" autocomplete="off" spellcheck="false">
@@ -335,9 +422,6 @@ function drawExchangeInput(): void {
     </div>
   `;
 
-  el!.querySelector('#btn-get-code')?.addEventListener('click', () => {
-    window.glowAPI.shell.openExternal(EXCHANGE_CODE_URL);
-  });
   el!.querySelector('#btn-submit-exchange')?.addEventListener('click', async () => {
     const input = el!.querySelector('#exchange-code-input') as HTMLInputElement;
     const code = input.value.trim();
@@ -355,6 +439,46 @@ function drawExchangeInput(): void {
   });
 }
 
+function drawAuthCodeInput(): void {
+  el!.innerHTML = `
+    <div class="page-accounts">
+      <h1 class="page-title">Authorization Code</h1>
+      <p class="page-subtitle">Enter your Epic Games authorization code</p>
+
+      <div class="exchange-form">
+        <p class="exchange-hint">Click the link below, log in with your Epic Games account, and copy the <code>authorizationCode</code> value shown on the page.</p>
+        <button class="tos-link-btn" id="btn-get-authcode">Get Authorization Code ↗</button>
+        <div class="exchange-input-wrap">
+          <input type="text" class="exchange-input" id="auth-code-input"
+                 placeholder="Paste your authorization code here" autocomplete="off" spellcheck="false">
+          <button class="btn btn-accent" id="btn-submit-authcode">Submit</button>
+        </div>
+      </div>
+
+      <button class="btn btn-ghost btn-back" id="btn-back">← Back</button>
+    </div>
+  `;
+
+  el!.querySelector('#btn-get-authcode')?.addEventListener('click', () => {
+    window.glowAPI.shell.openExternal(AUTH_CODE_URL);
+  });
+  el!.querySelector('#btn-submit-authcode')?.addEventListener('click', async () => {
+    const input = el!.querySelector('#auth-code-input') as HTMLInputElement;
+    const code = input.value.trim();
+    if (!code) return;
+    go('processing');
+    await window.glowAPI.accounts.submitAuthorizationCode(code);
+  });
+  el!.querySelector('#btn-back')?.addEventListener('click', () => {
+    go('choose-method');
+  });
+  el!.querySelector('#auth-code-input')?.addEventListener('keydown', (e) => {
+    if ((e as KeyboardEvent).key === 'Enter') {
+      el!.querySelector<HTMLButtonElement>('#btn-submit-authcode')?.click();
+    }
+  });
+}
+
 function drawProcessing(): void {
   el!.innerHTML = `
     <div class="auth-state">
@@ -363,6 +487,81 @@ function drawProcessing(): void {
       <p class="auth-state-text">Setting up your account. This won't take long.</p>
     </div>
   `;
+}
+
+function drawImportLaunchers(): void {
+  el!.innerHTML = `
+    <div class="auth-state">
+      <div class="auth-spinner"></div>
+      <h2 class="auth-state-title">Scanning launchers...</h2>
+      <p class="auth-state-text">Looking for accounts in Aerial &amp; Spitfire on this PC.</p>
+    </div>
+  `;
+
+  // Start the import immediately
+  window.glowAPI.accounts.importFromLaunchers().then(async (res) => {
+    importResults = res.results;
+    if (importResults.length === 0) {
+      result = { message: 'No accounts found. Make sure Aerial or Spitfire Launcher has been used on this PC.' };
+      go('error');
+    } else {
+      // Refresh data so the list is up to date
+      data = await window.glowAPI.accounts.getAll();
+      go('import-results');
+    }
+  }).catch((err: any) => {
+    result = { message: err?.message || 'Import failed unexpectedly' };
+    go('error');
+  });
+}
+
+function drawImportResults(): void {
+  const added = importResults.filter(r => r.status === 'added');
+  const existing = importResults.filter(r => r.status === 'existing');
+  const failed = importResults.filter(r => r.status === 'error');
+
+  const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+  const rowsHtml = importResults.map(r => {
+    let icon = '', cls = '', label = '';
+    if (r.status === 'added') {
+      icon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>';
+      cls = 'import-row--added';
+      label = 'Added';
+    } else if (r.status === 'existing') {
+      icon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#facc15" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>';
+      cls = 'import-row--existing';
+      label = 'Already exists';
+    } else {
+      icon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f87171" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>';
+      cls = 'import-row--error';
+      label = r.message || 'Failed';
+    }
+    return `<div class="import-row ${cls}">
+      <span class="import-row-icon">${icon}</span>
+      <div class="import-row-info">
+        <span class="import-row-name">${esc(r.displayName)}</span>
+        <span class="import-row-source">${esc(r.source)}</span>
+      </div>
+      <span class="import-row-status">${esc(label)}</span>
+    </div>`;
+  }).join('');
+
+  el!.innerHTML = `
+    <div class="page-accounts">
+      <h1 class="page-title">Import Summary</h1>
+      <p class="page-subtitle">${importResults.length} account${importResults.length !== 1 ? 's' : ''} found${added.length ? ` · ${added.length} added` : ''}${existing.length ? ` · ${existing.length} already in GLOW` : ''}${failed.length ? ` · ${failed.length} failed` : ''}</p>
+
+      <div class="import-results-list">${rowsHtml}</div>
+
+      <button class="btn btn-accent" id="btn-import-done">Done</button>
+    </div>
+  `;
+
+  el!.querySelector('#btn-import-done')?.addEventListener('click', async () => {
+    data = await window.glowAPI.accounts.getAll();
+    go('list');
+  });
 }
 
 function drawSuccess(): void {

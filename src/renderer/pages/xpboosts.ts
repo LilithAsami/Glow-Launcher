@@ -22,6 +22,14 @@ let searchTerm = '';
 let searching = false;
 let searchResults: { accountId: string; displayName: string; platform?: string }[] = [];
 let searchError = '';
+let showBg = false;
+let customBgPath = '';
+
+const xpBgDiv = () => {
+  if (!showBg) return '';
+  if (customBgPath) return `<div class="xpboost-bg" style="background: url('glow-bg://load/${customBgPath.replace(/\\/g, '/')}') center / cover no-repeat, linear-gradient(135deg, #0d0d1a 0%, #1a1030 40%, #0d0d1a 100%)"></div>`;
+  return '<div class="xpboost-bg"></div>';
+};
 
 // ─── Helpers ──────────────────────────────────────────────────
 
@@ -40,6 +48,7 @@ function draw(): void {
 
   el.innerHTML = `
     <div class="xpboost-page">
+      ${xpBgDiv()}
       <div class="xpboost-header">
         <h1 class="page-title">XP Boosts</h1>
         <p class="page-subtitle">Activate Save the World XP Boosts (Personal or Teammate)</p>
@@ -387,8 +396,11 @@ export const xpBoostsPage: PageDefinition = {
   label: 'XP Boosts',
   icon: `<img src="assets/icons/stw/resources/smallxpboost.png" alt="XP Boosts" width="18" height="18" style="vertical-align:middle" />`,
   order: 23,
-  render(container) {
+  async render(container) {
     el = container;
+    const s = await window.glowAPI.storage.get<{ pageBackgrounds?: boolean; customBackgrounds?: Record<string, string> }>('settings').catch(() => null);
+    showBg = s?.pageBackgrounds ?? false;
+    customBgPath = s?.customBackgrounds?.xpboosts || '';
     fetchBoosts();
     window.addEventListener('glow:account-switched', onAccountChanged);
   },

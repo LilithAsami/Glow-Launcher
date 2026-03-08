@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import type { Storage } from './storage';
 import * as auth from './helpers/auth/auth';
+import { importFromOtherLaunchers } from './helpers/auth/importAccounts';
 import * as autokick from './events/autokick/monitor';
 import * as security from './helpers/auth/security';
 import * as alerts from './helpers/stw/alerts';
@@ -20,15 +21,20 @@ import * as ghostequip from './helpers/epic/ghostequip';
 import * as friends from './helpers/epic/friends';
 import { generateLockerImage } from './managers/locker/generateLocker';
 import axios from 'axios';
-import { refreshAccountToken, authenticatedRequest } from './helpers/auth/tokenRefresh';
+import { refreshAccountToken, authenticatedRequest, validateAllTokens } from './helpers/auth/tokenRefresh';
 import { Endpoints } from './helpers/endpoints';
 import { launchGame } from './helpers/cmd/launcher';
 import * as devbuilds from './helpers/cmd/devbuilds';
 import * as devstairs from './helpers/cmd/devstairs';
 import * as airstrike from './helpers/cmd/airstrike';
 import * as trapheight from './helpers/cmd/trapheight';
+import * as fov from './helpers/cmd/fov';
 import * as dupe from './helpers/cmd/dupe';
 import * as vbucksInfo from './helpers/cmd/vbucks';
+import * as giftsInfo from './helpers/cmd/gifts';
+import * as fnlaunch from './helpers/cmd/fnlaunch';
+import * as library from './helpers/cmd/library';
+import * as store from './helpers/cmd/store';
 import * as epicstatus from './helpers/epic/epicstatus';
 import * as redeemcodes from './helpers/cmd/redeemcodes';
 import * as xpboosts from './helpers/cmd/xpboosts';
@@ -42,13 +48,18 @@ import * as autoExp from './events/expeditions/autoExpeditions';
 import expeditionManager from './managers/expeditions';
 import { getCampaignData } from './managers/expeditions/helpers';
 import guia from './utils/map/guia.json';
+import { notificationManager } from './managers/notifications/NotificationManager';
 import type { AutoKickAccountConfig, AccountsData } from '../shared/types';
 
 /**
  * Register all IPC handlers.
  * Add new channels here as the app grows.
  */
-export function registerIpcHandlers(storage: Storage): void {
+export function registerIpcHandlers(
+  storage: Storage,
+  performMemoryCleanup: () => Promise<void>,
+  restartRamCleanup: () => Promise<void>,
+): void {
   // ── Storage ──────────────────────────────────────────────
   ipcMain.handle('storage:get', async (_e, key: string) => {
     return storage.get(key);
@@ -94,6 +105,10 @@ export function registerIpcHandlers(storage: Storage): void {
     return shell.openExternal(url);
   });
 
+  ipcMain.handle('shell:open-path', (_e, p: string) => {
+    return shell.openPath(p);
+  });
+
   // ── Accounts ─────────────────────────────────────────────
   ipcMain.handle('accounts:get-all', () => {
     return auth.getAccountsData(storage);
@@ -107,12 +122,24 @@ export function registerIpcHandlers(storage: Storage): void {
     auth.startDeviceAuth(storage).catch(() => {});
   });
 
+  ipcMain.handle('accounts:start-device-code', () => {
+    auth.startDeviceCodeDisplay(storage).catch(() => {});
+  });
+
   ipcMain.handle('accounts:submit-exchange', (_e, code: string) => {
     auth.submitExchangeCode(storage, code).catch(() => {});
   });
 
+  ipcMain.handle('accounts:submit-auth-code', (_e, code: string) => {
+    auth.submitAuthorizationCode(storage, code).catch(() => {});
+  });
+
   ipcMain.handle('accounts:cancel-auth', () => {
     auth.cancelAuth();
+  });
+
+  ipcMain.handle('accounts:import-launchers', () => {
+    return importFromOtherLaunchers(storage);
   });
 
   ipcMain.handle('accounts:remove', (_e, id: string) => {
@@ -188,6 +215,10 @@ export function registerIpcHandlers(storage: Storage): void {
     } catch (err: any) {
       return { success: false, avatars: {}, error: err?.message };
     }
+  });
+
+  ipcMain.handle('accounts:validate-all', () => {
+    return validateAllTokens(storage);
   });
 
   ipcMain.handle('accounts:get-avatar', async (_e, accountId: string) => {
@@ -292,8 +323,26 @@ export function registerIpcHandlers(storage: Storage): void {
   });
 
   // ── Launch ─────────────────────────────────────────────────
-  ipcMain.handle('launch:start', () => {
-    return launchGame(storage);
+  ipcMain.handle('launch:start', async () => {
+    const result = await launchGame(storage);
+    if (result.success) {
+      // Start process killer after successful launch
+      fnlaunch.startProcessKiller(storage);
+    }
+    return result;
+  });
+
+  ipcMain.handle('launch:kill', async () => {
+    const { exec: execCb } = require('child_process') as typeof import('child_process');
+    return new Promise<{ success: boolean; message: string }>((resolve) => {
+      execCb('taskkill /F /IM FortniteClient-Win64-Shipping.exe /T', { shell: 'cmd.exe' }, (err) => {
+        if (err) {
+          resolve({ success: false, message: 'Fortnite is not running' });
+        } else {
+          resolve({ success: true, message: 'Fortnite closed' });
+        }
+      });
+    });
   });
 
   // ── Security ───────────────────────────────────────────────
@@ -327,6 +376,17 @@ export function registerIpcHandlers(storage: Storage): void {
     const result = await dialog.showOpenDialog(win!, {
       properties: ['openDirectory'],
       title: 'Select Fortnite Installation Folder',
+    });
+    if (result.canceled || result.filePaths.length === 0) return null;
+    return result.filePaths[0];
+  });
+
+  ipcMain.handle('dialog:open-file', async (e, options?: { title?: string; filters?: { name: string; extensions: string[] }[] }) => {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    const result = await dialog.showOpenDialog(win!, {
+      properties: ['openFile'],
+      title: options?.title || 'Select a file',
+      filters: options?.filters || [{ name: 'All Files', extensions: ['*'] }],
     });
     if (result.canceled || result.filePaths.length === 0) return null;
     return result.filePaths[0];
@@ -429,6 +489,19 @@ export function registerIpcHandlers(storage: Storage): void {
     return trapheight.getHeightData();
   });
 
+  // ── FOV Patcher ────────────────────────────────────────────
+  ipcMain.handle('files:fov-status', async () => {
+    return fov.getFovStatus(storage);
+  });
+
+  ipcMain.handle('files:fov-apply', async (_e, fovValue: number) => {
+    return fov.applyFov(storage, fovValue);
+  });
+
+  ipcMain.handle('files:fov-restore', async () => {
+    return fov.restoreFov(storage);
+  });
+
   // ── Dupe ───────────────────────────────────────────────────
   ipcMain.handle('dupe:execute', async () => {
     return dupe.executeDupe(storage);
@@ -437,6 +510,11 @@ export function registerIpcHandlers(storage: Storage): void {
   // ── V-Bucks Info ───────────────────────────────────────────
   ipcMain.handle('vbucks:get-info', async () => {
     return vbucksInfo.getVbucksInfo(storage);
+  });
+
+  // ── Gifts Info ─────────────────────────────────────────────
+  ipcMain.handle('gifts:get-info', async () => {
+    return giftsInfo.getGiftsInfo(storage);
   });
 
   // ── Epic Status ────────────────────────────────────────────
@@ -1003,6 +1081,14 @@ export function registerIpcHandlers(storage: Storage): void {
         maxExpeditionsToSend: amount,
       });
 
+      // Notification for expedition sends
+      if (result.success && result.sent && result.sent > 0) {
+        const accsData = (await storage.get<AccountsData>('accounts')) ?? { tosAccepted: false, accounts: [] };
+        const acc = accsData.accounts.find((a) => a.accountId === accountId);
+        const name = acc?.displayName || accountId.slice(0, 8);
+        notificationManager.push('expeditions', 'Expeditions Sent', `${name} — sent ${result.sent} expedition(s)`);
+      }
+
       return result;
     } catch (err: any) {
       return { success: false, error: err.message };
@@ -1188,5 +1274,355 @@ export function registerIpcHandlers(storage: Storage): void {
 
   ipcMain.handle('discord-rpc:get-status', () => {
     return { connected: discordRpc.isConnected(), enabled: discordRpc.isEnabled() };
+  });
+
+  // ── Notifications ────────────────────────────────────────
+  ipcMain.handle('notifications:get-all', () => {
+    return notificationManager.getAll();
+  });
+
+  ipcMain.handle('notifications:get-unread-count', () => {
+    return notificationManager.getUnreadCount();
+  });
+
+  ipcMain.handle('notifications:mark-read', (_e, id: string) => {
+    notificationManager.markRead(id);
+  });
+
+  ipcMain.handle('notifications:mark-all-read', () => {
+    notificationManager.markAllRead();
+  });
+
+  ipcMain.handle('notifications:clear-all', () => {
+    notificationManager.clearAll();
+  });
+
+  ipcMain.handle('notifications:delete', (_e, id: string) => {
+    notificationManager.delete(id);
+  });
+
+  ipcMain.handle('notifications:get-settings', () => {
+    return notificationManager.getSettings();
+  });
+
+  ipcMain.handle('notifications:update-settings', async (_e, partial: any) => {
+    return notificationManager.updateSettings(partial);
+  });
+
+  // ── Llamas ───────────────────────────────────────────────
+  ipcMain.handle('llamas:get', async (_e, accountId: string) => {
+    try {
+      const token = await refreshAccountToken(storage, accountId);
+      if (!token) return { success: false, error: 'Failed to refresh token' };
+
+      const campaignResult = await getCampaignData({ accountId, accessToken: token, forceRefresh: true });
+      if (!campaignResult.success) return { success: false, error: campaignResult.error };
+
+      const items = campaignResult.data?.items || {};
+      const llamaList: { templateId: string; name: string; quantity: number; itemIds: string[]; type: 'voucher' | 'cardpack' }[] = [];
+
+      // 1. Scan for voucher-based llamas (AccountResource:voucher_basicpack, voucher_cardpack_*)
+      for (const [guid, item] of Object.entries(items) as [string, any][]) {
+        const tpl: string = item.templateId || '';
+        if (!tpl.startsWith('AccountResource:voucher_')) continue;
+        const voucherKey = tpl.replace('AccountResource:', '');
+        // Only llama vouchers: voucher_basicpack* or voucher_cardpack_*
+        if (!/^voucher_(basicpack|cardpack_)/.test(voucherKey)) continue;
+        const qty = item.quantity || 0;
+        if (qty <= 0) continue;
+
+        const guiaName = (guia as Record<string, string>)[tpl];
+        // Clean display name: remove " Token" suffix if present
+        let displayName = guiaName || voucherKey.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase());
+        displayName = displayName.replace(/\s+Token$/i, '');
+
+        llamaList.push({
+          templateId: tpl,
+          name: displayName,
+          quantity: qty,
+          itemIds: [guid],
+          type: 'voucher',
+        });
+      }
+
+      // 2. Scan for actual CardPack items in inventory
+      const cardpackMap = new Map<string, (typeof llamaList)[0]>();
+      for (const [guid, item] of Object.entries(items) as [string, any][]) {
+        const tpl: string = item.templateId || '';
+        if (!tpl.startsWith('CardPack:')) continue;
+        if (tpl.includes('_choice_') || tpl.includes('choice')) continue;
+
+        const existing = cardpackMap.get(tpl);
+        if (existing) {
+          existing.quantity += (item.quantity || 1);
+          existing.itemIds.push(guid);
+        } else {
+          const guiaName = (guia as Record<string, string>)[tpl];
+          const key = tpl.replace('CardPack:', '');
+          cardpackMap.set(tpl, {
+            templateId: tpl,
+            name: guiaName || key.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase()),
+            quantity: item.quantity || 1,
+            itemIds: [guid],
+            type: 'cardpack',
+          });
+        }
+      }
+      llamaList.push(...cardpackMap.values());
+
+      llamaList.sort((a, b) => b.quantity - a.quantity);
+      return { success: true, llamas: llamaList };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('llamas:open', async (_e, accountId: string, templateId: string, type: string, count: number, itemIds: string[]) => {
+    // Helper to send log entries to the renderer + console
+    function sendLlamaLog(level: 'info' | 'success' | 'error' | 'warn', account: string, msg: string): void {
+      console.log(`[LLAMAS][${level.toUpperCase()}] ${account} — ${msg}`);
+      try {
+        const entry = { level, account, message: msg, timestamp: Date.now() };
+        for (const win of BrowserWindow.getAllWindows()) {
+          win.webContents.send('llamas:log', entry);
+        }
+      } catch {}
+    }
+
+    try {
+      const accsData = (await storage.get<AccountsData>('accounts')) ?? { tosAccepted: false, accounts: [] };
+      const acc = accsData.accounts.find((a) => a.accountId === accountId);
+      const displayName = acc?.displayName || accountId.slice(0, 8);
+
+      console.log(`[LLAMAS] open called — account=${displayName}, tpl=${templateId}, type=${type}, count=${count}, ids=${JSON.stringify(itemIds)}`);
+
+      const token = await refreshAccountToken(storage, accountId);
+      if (!token) {
+        sendLlamaLog('error', displayName, 'Failed to refresh token');
+        return { success: false, error: 'Failed to refresh token' };
+      }
+
+      const { composeMCP } = await import('./utils/mcp');
+      let opened = 0;
+
+      // ── CardPack items: OpenCardPackBatch directly ──
+      if (type === 'cardpack' && itemIds && itemIds.length > 0) {
+        const ids = itemIds.slice(0, count);
+        const BATCH = 10;
+        const totalBatches = Math.ceil(ids.length / BATCH);
+        sendLlamaLog('info', displayName, `Opening ${ids.length} card pack(s) in ${totalBatches} batch(es)…`);
+
+        for (let i = 0; i < ids.length; i += BATCH) {
+          const batch = ids.slice(i, i + BATCH);
+          const batchNum = Math.floor(i / BATCH) + 1;
+          try {
+            sendLlamaLog('info', displayName, `Batch ${batchNum}/${totalBatches} — ${batch.length} pack(s)…`);
+            await composeMCP({
+              profile: 'campaign',
+              operation: 'OpenCardPackBatch',
+              accountId,
+              accessToken: token,
+              body: { cardPackItemIds: batch },
+            });
+            opened += batch.length;
+            sendLlamaLog('success', displayName, `Batch ${batchNum}/${totalBatches} — opened ${batch.length}`);
+          } catch (batchErr: any) {
+            const msg = batchErr?.response?.data?.errorMessage || batchErr.message || 'Batch failed';
+            sendLlamaLog('error', displayName, `Batch ${batchNum}/${totalBatches} failed: ${msg}`);
+            if (opened > 0) break;
+            return { success: false, error: msg };
+          }
+        }
+      }
+
+      // ── Voucher items: PopulatePrerolledOffers → catalog → PurchaseCatalogEntry ──
+      else if (type === 'voucher') {
+        sendLlamaLog('info', displayName, `Refreshing llama offers (PopulatePrerolledOffers)…`);
+        await composeMCP({
+          profile: 'campaign',
+          operation: 'PopulatePrerolledOffers',
+          accountId,
+          accessToken: token,
+        });
+
+        sendLlamaLog('info', displayName, `Fetching catalog…`);
+        const catalogRes = await axios.get(Endpoints.BR_STORE, {
+          headers: { Authorization: `Bearer ${token}` },
+          timeout: 15_000,
+        });
+
+        // Find the offer that costs this voucher templateId
+        const storefronts = catalogRes.data?.storefronts || [];
+        let matchingOffer: any = null;
+        for (const sf of storefronts) {
+          for (const entry of (sf.catalogEntries || [])) {
+            const prices = entry.prices || [];
+            if (prices.some((p: any) => p.currencySubType === templateId)) {
+              matchingOffer = entry;
+              break;
+            }
+          }
+          if (matchingOffer) break;
+        }
+
+        if (!matchingOffer) {
+          sendLlamaLog('error', displayName, `No catalog offer found for ${templateId}`);
+          console.log('[LLAMAS] Catalog storefronts:', JSON.stringify(storefronts.map((sf: any) => ({
+            name: sf.name,
+            entries: (sf.catalogEntries || []).map((e: any) => ({ offerId: e.offerId, prices: e.prices })),
+          })), null, 2));
+          return { success: false, error: 'No matching llama offer found in catalog' };
+        }
+
+        const price = matchingOffer.prices.find((p: any) => p.currencySubType === templateId);
+        if (!price) {
+          sendLlamaLog('error', displayName, 'Price mismatch in catalog offer');
+          return { success: false, error: 'Price mismatch in catalog offer' };
+        }
+
+        sendLlamaLog('info', displayName, `Found offer ${matchingOffer.offerId} — opening ${count} llama(s)…`);
+
+        for (let i = 0; i < count; i++) {
+          try {
+            sendLlamaLog('info', displayName, `Purchasing ${i + 1}/${count}…`);
+            await composeMCP({
+              profile: 'common_core',
+              operation: 'PurchaseCatalogEntry',
+              accountId,
+              accessToken: token,
+              body: {
+                offerId: matchingOffer.offerId,
+                purchaseQuantity: 1,
+                currency: price.currencyType,
+                currencySubType: price.currencySubType,
+                expectedTotalPrice: price.finalPrice,
+                gameContext: '',
+              },
+            });
+            opened++;
+            sendLlamaLog('success', displayName, `Purchased ${i + 1}/${count}`);
+          } catch (purchaseErr: any) {
+            const msg = purchaseErr?.response?.data?.errorMessage || purchaseErr.message || 'Purchase failed';
+            sendLlamaLog('error', displayName, `Failed at ${i + 1}/${count}: ${msg}`);
+            if (opened > 0) break;
+            return { success: false, error: msg };
+          }
+        }
+
+        // After purchasing voucher llamas, new CardPack items appear in the profile.
+        // Automatically open them with OpenCardPackBatch.
+        if (opened > 0) {
+          sendLlamaLog('info', displayName, `Purchased ${opened} — scanning for new card packs to open…`);
+          const freshProfile = await getCampaignData({ accountId, accessToken: token, forceRefresh: true });
+          if (freshProfile.success && freshProfile.data?.items) {
+            const freshItems = freshProfile.data.items as Record<string, any>;
+            const newCardPackIds: string[] = [];
+            for (const [guid, item] of Object.entries(freshItems)) {
+              const tpl: string = item.templateId || '';
+              if (tpl.startsWith('CardPack:') && !tpl.includes('_choice_') && !tpl.includes('choice')) {
+                newCardPackIds.push(guid);
+              }
+            }
+
+            if (newCardPackIds.length > 0) {
+              sendLlamaLog('info', displayName, `Found ${newCardPackIds.length} card pack(s) — opening…`);
+              const BATCH = 10;
+              const totalBatches = Math.ceil(newCardPackIds.length / BATCH);
+              for (let i = 0; i < newCardPackIds.length; i += BATCH) {
+                const batch = newCardPackIds.slice(i, i + BATCH);
+                const batchNum = Math.floor(i / BATCH) + 1;
+                try {
+                  sendLlamaLog('info', displayName, `Opening pack batch ${batchNum}/${totalBatches} — ${batch.length} pack(s)…`);
+                  await composeMCP({
+                    profile: 'campaign',
+                    operation: 'OpenCardPackBatch',
+                    accountId,
+                    accessToken: token,
+                    body: { cardPackItemIds: batch },
+                  });
+                  sendLlamaLog('success', displayName, `Pack batch ${batchNum}/${totalBatches} — opened ${batch.length}`);
+                } catch (openErr: any) {
+                  const msg = openErr?.response?.data?.errorMessage || openErr.message || 'Open failed';
+                  sendLlamaLog('error', displayName, `Pack batch ${batchNum}/${totalBatches} failed: ${msg}`);
+                  break;
+                }
+              }
+              sendLlamaLog('success', displayName, `All card packs opened`);
+            } else {
+              sendLlamaLog('info', displayName, `No new card packs found after purchase`);
+            }
+          }
+        }
+      } else {
+        sendLlamaLog('error', displayName, `Unknown type: ${type}`);
+        return { success: false, error: `Unknown llama type: ${type}` };
+      }
+
+      sendLlamaLog('success', displayName, `Done — opened ${opened} llama(s) total`);
+      notificationManager.push('llamas', 'Llamas Opened', `${displayName} — opened ${opened} llama(s)`);
+
+      return { success: true, opened };
+    } catch (err: any) {
+      console.error('[LLAMAS] Unexpected error:', err);
+      return { success: false, error: err.message };
+    }
+  });
+
+  // ── Memory Management ──────────────────────────────────────
+  ipcMain.handle('memory:get-usage', async () => {
+    const main = process.memoryUsage();
+    return {
+      heapUsed: main.heapUsed,
+      heapTotal: main.heapTotal,
+      rss: main.rss,
+    };
+  });
+
+  ipcMain.handle('memory:cleanup', async () => {
+    await performMemoryCleanup();
+    return { success: true };
+  });
+
+  ipcMain.on('memory:restart-timer', () => {
+    restartRamCleanup();
+  });
+
+  // ── FN Launch Settings ──────────────────────────────────
+  ipcMain.handle('fnlaunch:get-game-settings', () => {
+    return fnlaunch.getGameSettings(storage);
+  });
+
+  ipcMain.handle('fnlaunch:save-game-settings', (_e, partial: any) => {
+    return fnlaunch.saveGameSettings(storage, partial);
+  });
+
+  ipcMain.handle('fnlaunch:get-launch-settings', () => {
+    return fnlaunch.getLaunchSettings(storage);
+  });
+
+  ipcMain.handle('fnlaunch:save-launch-settings', (_e, settings: any) => {
+    return fnlaunch.saveLaunchSettings(storage, settings);
+  });
+
+  // ── Library ──────────────────────────────────────────────
+  ipcMain.handle('library:get-games', () => {
+    return library.getLibrary(storage);
+  });
+
+  ipcMain.handle('library:get-metadata', (_e, items: Array<{ namespace: string; catalogItemId: string }>) => {
+    return library.getGameMetadata(storage, items);
+  });
+
+  ipcMain.handle('library:launch-game', (_e, namespace: string, catalogItemId: string, appName: string) => {
+    return library.launchLibraryGame(namespace, catalogItemId, appName);
+  });
+
+  ipcMain.handle('library:toggle-favorite', (_e, appId: string) => {
+    return library.toggleFavorite(storage, appId);
+  });
+
+  // ── Store ───────────────────────────────────────────────
+  ipcMain.handle('store:get-free-games', () => {
+    return store.getFreeGames();
   });
 }

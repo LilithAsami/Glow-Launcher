@@ -1,10 +1,29 @@
 import axios from 'axios';
 import { Endpoints } from '../endpoints';
 import { refreshAccountToken, authenticatedRequest } from '../auth/tokenRefresh';
+import { getResourceIcon } from './alerts';
 import type { Storage } from '../../storage';
-import type { AccountsData } from '../../../shared/types';
+import type { AccountsData, QuestInfo, QuestObjective, QuestRewardItem, QuestsResult } from '../../../shared/types';
 import dailysJson from '../../utils/map/dailys.json';
 import guiaJson from '../../utils/map/guia.json';
+import questCatalog from '../../utils/map/Quests/quest_catalog.json';
+import questRewardsData from '../../utils/map/Quests/QuestRewards.json';
+
+// ── Quest catalog + rewards lookup ──────────────────────────────────────────────
+const catalog: Record<string, { category: string; image: string | null; fileName: string; objectives?: Record<string, number> }> = questCatalog as any;
+
+// Build rewards index: questTemplateIdLower → reward entries
+const rewardsRows: Record<string, any> = (questRewardsData as any)[0]?.Rows ?? (questRewardsData as any).Rows ?? {};
+const rewardsIndex = new Map<string, { templateId: string; quantity: number }[]>();
+for (const row of Object.values(rewardsRows)) {
+  const r = row as any;
+  if (!r.QuestTemplateId || !r.TemplateId) continue;
+  if (r.Hidden) continue;
+  const key = r.QuestTemplateId.toLowerCase();
+  const arr = rewardsIndex.get(key) ?? [];
+  arr.push({ templateId: r.TemplateId, quantity: r.Quantity || 1 });
+  rewardsIndex.set(key, arr);
+}
 
 // ── Daily quest database (embedded from _quest.js) ────────────────────────────
 const DAILY_DB: Record<string, { obj: Record<string, number> }> = {
@@ -69,22 +88,16 @@ async function getMainAccount(storage: Storage) {
 // ── Translate quest name ───────────────────────────────────────────────────────
 function translateQuestName(templateKey: string, lang: string): string {
   const fullKey = `Quest:${templateKey}`;
-
-  // Try dailys.json first
   const entry = dailysDb.Items?.[fullKey];
   if (entry?.name) {
     const name = typeof entry.name === 'string' ? entry.name : (entry.name[lang] ?? entry.name['en'] ?? entry.name['es']);
     if (name) return name;
   }
-
-  // Try guia.json
   if (guiaDb[fullKey]) {
     const g = guiaDb[fullKey];
     const name = g[lang] ?? g['en'] ?? g['es'];
     if (name) return name;
   }
-
-  // Fallback: prettify the raw template key
   return templateKey.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 }
 
@@ -97,46 +110,52 @@ function translateRewardName(itemType: string, lang: string): string {
     if (typeof n === 'object' && !n.PassedConditionItem) return n[lang] ?? n['en'] ?? n['es'] ?? itemType;
     if (n.PassedConditionItem) return n[lang]?.PassedConditionItem ?? n['en']?.PassedConditionItem ?? itemType;
   }
-
   if (guiaDb[itemType]) {
     const g = guiaDb[itemType];
     return g[lang] ?? g['en'] ?? g['es'] ?? itemType;
   }
-
-  // Prettify fallback
   const parts = itemType.split(':');
   return parts[parts.length - 1].replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 }
 
-// ── Quest interfaces ───────────────────────────────────────────────────────────
-export interface QuestObjective {
-  key: string;
-  current: number;
-  max: number | null;
+// ── Get rewards for a quest ──────────────────────────────────────────────────
+function getQuestRewards(templateId: string, lang: string): QuestRewardItem[] {
+  const rewards = rewardsIndex.get(templateId.toLowerCase());
+  if (!rewards) return [];
+  return rewards.map(r => ({
+    templateId: r.templateId,
+    name: translateRewardName(r.templateId, lang),
+    quantity: r.quantity,
+    icon: getResourceIcon(r.templateId, ''),
+  }));
 }
 
-export interface QuestInfo {
-  /** MCP item GUID (for reroll) */
-  itemId: string;
-  templateId: string;
-  /** Raw quest key (e.g. daily_destroybears) */
-  questKey: string;
-  /** Category: Dailies, Wargames, Endurance, Weekly Mythic, Others */
-  category: 'Dailies' | 'Wargames' | 'Endurance' | 'Weekly Mythic' | 'Others';
-  /** Translated display name */
-  name: string;
-  /** Quest state: Active, Claimed, etc. */
-  state: string;
-  /** Objectives with progress */
-  objectives: QuestObjective[];
-  /** Whether the quest can be rerolled */
-  canReroll: boolean;
+// ── Resolve quest category from catalog ──────────────────────────────────────
+function resolveCategory(raw: string): string {
+  const entry = catalog[raw];
+  if (entry) return entry.category;
+  // Fallback heuristic
+  if (raw.startsWith('daily_')) return 'Daily';
+  if (raw.startsWith('wargames_')) return 'Events';
+  if (raw.startsWith('endurancedaily_')) return 'Events';
+  if (raw.startsWith('stw_stormkinghard_weekly')) return 'WeeklyQuest';
+  if (raw.startsWith('stw_stormkinghard_')) return 'StormKingHardmode';
+  if (raw.startsWith('s11_holdfast')) return 'Events';
+  if (raw.startsWith('weeklyquest_')) return 'WeeklyQuest';
+  if (raw.includes('stonewood')) return 'Stonewood';
+  if (raw.includes('plankerton')) return 'Plankerton';
+  if (raw.includes('cannyvalley')) return 'CannyValley';
+  if (raw.includes('twinepeaks')) return 'TwinePeaks';
+  if (raw.includes('challenge_')) return 'Challenges';
+  if (raw.includes('achievement_')) return 'Achievements';
+  if (raw.includes('phoenix') || raw.includes('ventures_')) return 'Phoenix';
+  return 'Others';
 }
 
-export interface QuestsResult {
-  success: boolean;
-  quests?: QuestInfo[];
-  error?: string;
+// ── Resolve quest image from catalog ──────────────────────────────────────────
+function resolveImage(raw: string): string | null {
+  const entry = catalog[raw];
+  return entry?.image ?? null;
 }
 
 // ── Parse and categorize quests ─────────────────────────────────────────────────
@@ -154,61 +173,33 @@ function parseQuests(items: Record<string, any>, lang: string): QuestInfo[] {
     // Skip claimed quests
     if (state === 'Claimed') continue;
 
-    const isDaily = raw.startsWith('daily_');
-    const isWargames = raw.startsWith('wargames_');
-    const isEndurance = raw.startsWith('endurancedaily_');
-    const isMythicWeekly = raw.startsWith('stw_stormkinghard_weekly');
-
-    if (!isDaily && !isWargames && !isEndurance && !isMythicWeekly) continue;
-
-    let category: QuestInfo['category'];
-    let name: string;
-    let canReroll = false;
-
-    if (isDaily) {
-      category = 'Dailies';
-      name = translateQuestName(raw, lang);
-      canReroll = true;
-    } else if (isWargames) {
-      category = 'Wargames';
-      if (raw === 'wargames_completedailyquest') {
-        name = lang === 'es' ? 'Completar diarias de Wargames' : 'Complete Wargames Dailies';
-      } else {
-        const suffix = raw.replace('wargames_dailyquest_', '').replace(/_/g, ' ');
-        name = `Wargames: ${suffix.charAt(0).toUpperCase() + suffix.slice(1)}`;
-      }
-    } else if (isEndurance) {
-      category = 'Endurance';
-      const m = raw.match(/endurancedaily_(t\d+)_w(\d+)/);
-      if (m) {
-        const zone = ENDURANCE_ZONES[m[1]] ?? m[1].toUpperCase();
-        const wave = parseInt(m[2], 10);
-        name = `${zone} — Wave ${wave}`;
-      } else {
-        name = raw.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-      }
-    } else {
-      // Mythic weekly
-      category = 'Weekly Mythic';
-      name = lang === 'es' ? 'Rey de la Tormenta Mitico (Semanal)' : 'Mythic Storm King (Weekly)';
-      canReroll = true;
-    }
+    const category = resolveCategory(raw);
+    const name = translateQuestName(raw, lang);
+    const canReroll = raw.startsWith('daily_') || raw.startsWith('stw_stormkinghard_weekly');
+    const image = resolveImage(raw);
+    const rewards = getQuestRewards(tid, lang);
 
     // Parse objectives
     const objectives: QuestObjective[] = [];
     const dbEntry = DAILY_DB[raw];
+    const catalogEntry = catalog[raw];
     const completionEntries = Object.entries(attrs).filter(([k]) => k.startsWith('completion_'));
 
     for (const [key, val] of completionEntries) {
       const objKey = key.replace(/^completion_/, '');
       const current = Number(val) || 0;
-      const max = dbEntry?.obj?.[objKey] ?? null;
+      // Lookup max: first DAILY_DB, then catalog objectives
+      const max = dbEntry?.obj?.[objKey] ?? catalogEntry?.objectives?.[objKey] ?? null;
       objectives.push({ key: objKey, current, max });
     }
 
-    // If no completion_ entries but we know objectives from DB, show them as 0
     if (objectives.length === 0 && dbEntry) {
       for (const [objKey, maxVal] of Object.entries(dbEntry.obj)) {
+        objectives.push({ key: objKey, current: 0, max: maxVal });
+      }
+    } else if (objectives.length === 0 && catalogEntry?.objectives) {
+      // No completion_ attributes, but catalog has objectives — show them with 0 progress
+      for (const [objKey, maxVal] of Object.entries(catalogEntry.objectives)) {
         objectives.push({ key: objKey, current: 0, max: maxVal });
       }
     }
@@ -222,10 +213,18 @@ function parseQuests(items: Record<string, any>, lang: string): QuestInfo[] {
       state,
       objectives,
       canReroll,
+      image,
+      rewards,
     });
   }
 
   return quests;
+}
+
+// ── Extract dailyQuestRerolls from profile ────────────────────────────────────
+function extractDailyRerolls(profileData: any): number {
+  const attrs = profileData?.profileChanges?.[0]?.profile?.stats?.attributes;
+  return attrs?.quest_manager?.dailyQuestRerolls ?? 0;
 }
 
 // ── Public: fetch all quests for the main account ──────────────────────────────
@@ -259,7 +258,8 @@ export async function getQuests(storage: Storage, lang: string = 'es'): Promise<
     if (!items) return { success: false, error: 'No profile items found' };
 
     const quests = parseQuests(items, lang);
-    return { success: true, quests };
+    const dailyRerolls = extractDailyRerolls(data);
+    return { success: true, quests, dailyRerolls };
   } catch (error: any) {
     const msg = error?.response?.data?.errorMessage
       || error?.response?.data?.message

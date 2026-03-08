@@ -9,6 +9,14 @@ let dupeWaiting = false;
 let dupeTimeRemaining = 0;
 let dupeTotalWait = 0;
 let dupeCountdownInterval: ReturnType<typeof setInterval> | null = null;
+let showBg = false;
+let customBgPath = '';
+
+const dupeBgDiv = () => {
+  if (!showBg) return '';
+  if (customBgPath) return `<div class="dupe-bg" style="background: url('glow-bg://load/${customBgPath.replace(/\\/g, '/')}') center / cover no-repeat, linear-gradient(135deg, #0d0d1a 0%, #1a1030 40%, #0d0d1a 100%)"></div>`;
+  return '<div class="dupe-bg"></div>';
+};
 
 // ─── Helpers ──────────────────────────────────────────────────
 
@@ -29,7 +37,8 @@ function draw(): void {
   if (!el) return;
 
   el.innerHTML = `
-    <div class="dupe-page">
+    <div class="dupe-page${showBg ? ' dupe-page--withbg' : ''}">
+      ${dupeBgDiv()}
       <div class="dupe-header">
         <h1 class="page-title">Dupe</h1>
         <p class="page-subtitle">STW lobby dupe — You must be in your Homebase (FORTOUTPOST) and bugged</p>
@@ -165,7 +174,11 @@ export const dupePage: PageDefinition = {
   order: 19,
   render(container) {
     el = container;
-    draw();
+    window.glowAPI.storage.get<{ pageBackgrounds?: boolean; customBackgrounds?: Record<string, string> }>('settings').then(s => {
+      showBg = s?.pageBackgrounds ?? false;
+      customBgPath = s?.customBackgrounds?.dupe || '';
+      draw();
+    }).catch(() => draw());
   },
   cleanup() {
     window.glowAPI.dupe.offStatus();

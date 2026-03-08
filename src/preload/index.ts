@@ -22,14 +22,18 @@ contextBridge.exposeInMainWorld('glowAPI', {
     getAll: () => ipcRenderer.invoke('accounts:get-all'),
     acceptTos: () => ipcRenderer.invoke('accounts:accept-tos'),
     startDeviceAuth: () => ipcRenderer.invoke('accounts:start-device-auth'),
+      startDeviceCode: () => ipcRenderer.invoke('accounts:start-device-code'),
     submitExchangeCode: (code: string) => ipcRenderer.invoke('accounts:submit-exchange', code),
+      submitAuthorizationCode: (code: string) => ipcRenderer.invoke('accounts:submit-auth-code', code),
     cancelAuth: () => ipcRenderer.invoke('accounts:cancel-auth'),
+    importFromLaunchers: () => ipcRenderer.invoke('accounts:import-launchers'),
     remove: (accountId: string) => ipcRenderer.invoke('accounts:remove', accountId),
     setMain: (accountId: string) => ipcRenderer.invoke('accounts:set-main', accountId),
     reorder: (orderedIds: string[]) => ipcRenderer.invoke('accounts:reorder', orderedIds),
     getAvatar: (accountId: string) => ipcRenderer.invoke('accounts:get-avatar', accountId),
     getAvatarCached: (accountId: string) => ipcRenderer.invoke('accounts:get-avatar-cached', accountId),
     getAllAvatars: () => ipcRenderer.invoke('accounts:get-all-avatars'),
+    validateAll: () => ipcRenderer.invoke('accounts:validate-all'),
     onAuthUpdate: (callback: (data: any) => void) => {
       ipcRenderer.removeAllListeners('accounts:auth-update');
       ipcRenderer.on('accounts:auth-update', (_e, data) => callback(data));
@@ -71,9 +75,11 @@ contextBridge.exposeInMainWorld('glowAPI', {
   },
   shell: {
     openExternal: (url: string) => ipcRenderer.invoke('shell:open-external', url),
+    openPath: (p: string) => ipcRenderer.invoke('shell:open-path', p),
   },
   launch: {
     start: () => ipcRenderer.invoke('launch:start'),
+    kill: () => ipcRenderer.invoke('launch:kill'),
     onStatus: (cb: (data: any) => void) => {
       ipcRenderer.removeAllListeners('launch:status');
       ipcRenderer.on('launch:status', (_e, data) => cb(data));
@@ -82,6 +88,7 @@ contextBridge.exposeInMainWorld('glowAPI', {
   },
   dialog: {
     openDirectory: () => ipcRenderer.invoke('dialog:open-directory'),
+    openFile: (options?: { title?: string; filters?: { name: string; extensions: string[] }[] }) => ipcRenderer.invoke('dialog:open-file', options),
   },
   alerts: {
     getMissions: () => ipcRenderer.invoke('alerts:get-missions'),
@@ -122,6 +129,9 @@ contextBridge.exposeInMainWorld('glowAPI', {
     trapHeightModifiedTraps: () => ipcRenderer.invoke('files:trapheight-modified-traps'),
     trapHeightFamilyInfo: () => ipcRenderer.invoke('files:trapheight-family-info'),
     trapHeightData: () => ipcRenderer.invoke('files:trapheight-height-data'),
+    fovStatus: () => ipcRenderer.invoke('files:fov-status'),
+    fovApply: (fovValue: number) => ipcRenderer.invoke('files:fov-apply', fovValue),
+    fovRestore: () => ipcRenderer.invoke('files:fov-restore'),
   },
   dupe: {
     execute: () => ipcRenderer.invoke('dupe:execute'),
@@ -350,5 +360,60 @@ contextBridge.exposeInMainWorld('glowAPI', {
       ipcRenderer.on('discord-rpc:status', (_e, data) => cb(data));
     },
     offStatus: () => { ipcRenderer.removeAllListeners('discord-rpc:status'); },
+  },
+  notifications: {
+    getAll: () => ipcRenderer.invoke('notifications:get-all'),
+    getUnreadCount: () => ipcRenderer.invoke('notifications:get-unread-count') as Promise<number>,
+    markRead: (id: string) => ipcRenderer.invoke('notifications:mark-read', id),
+    markAllRead: () => ipcRenderer.invoke('notifications:mark-all-read'),
+    clearAll: () => ipcRenderer.invoke('notifications:clear-all'),
+    delete: (id: string) => ipcRenderer.invoke('notifications:delete', id),
+    getSettings: () => ipcRenderer.invoke('notifications:get-settings'),
+    updateSettings: (partial: any) => ipcRenderer.invoke('notifications:update-settings', partial),
+    onNew: (cb: (notif: any) => void) => {
+      ipcRenderer.removeAllListeners('notifications:new');
+      ipcRenderer.on('notifications:new', (_e, notif) => cb(notif));
+    },
+    offNew: () => { ipcRenderer.removeAllListeners('notifications:new'); },
+    onUpdated: (cb: (data: { unreadCount: number; total: number }) => void) => {
+      ipcRenderer.removeAllListeners('notifications:updated');
+      ipcRenderer.on('notifications:updated', (_e, data) => cb(data));
+    },
+    offUpdated: () => { ipcRenderer.removeAllListeners('notifications:updated'); },
+  },
+  llamas: {
+    get: (accountId: string) => ipcRenderer.invoke('llamas:get', accountId),
+    open: (accountId: string, templateId: string, type: string, count: number, itemIds: string[]) =>
+      ipcRenderer.invoke('llamas:open', accountId, templateId, type, count, itemIds),
+    onLog: (cb: (entry: any) => void) => {
+      ipcRenderer.removeAllListeners('llamas:log');
+      ipcRenderer.on('llamas:log', (_e, entry) => cb(entry));
+    },
+    offLog: () => { ipcRenderer.removeAllListeners('llamas:log'); },
+  },
+  memory: {
+    getUsage: () => ipcRenderer.invoke('memory:get-usage'),
+    cleanup: () => ipcRenderer.invoke('memory:cleanup'),
+    restartTimer: () => ipcRenderer.send('memory:restart-timer'),
+  },
+  gifts: {
+    getInfo: () => ipcRenderer.invoke('gifts:get-info'),
+  },
+  fnlaunch: {
+    getGameSettings: () => ipcRenderer.invoke('fnlaunch:get-game-settings'),
+    saveGameSettings: (partial: any) => ipcRenderer.invoke('fnlaunch:save-game-settings', partial),
+    getLaunchSettings: () => ipcRenderer.invoke('fnlaunch:get-launch-settings'),
+    saveLaunchSettings: (settings: any) => ipcRenderer.invoke('fnlaunch:save-launch-settings', settings),
+  },
+  library: {
+    getGames: () => ipcRenderer.invoke('library:get-games'),
+    getMetadata: (items: Array<{ namespace: string; catalogItemId: string }>) =>
+      ipcRenderer.invoke('library:get-metadata', items),
+    launchGame: (namespace: string, catalogItemId: string, appName: string) =>
+      ipcRenderer.invoke('library:launch-game', namespace, catalogItemId, appName),
+    toggleFavorite: (appId: string) => ipcRenderer.invoke('library:toggle-favorite', appId),
+  },
+  store: {
+    getFreeGames: () => ipcRenderer.invoke('store:get-free-games'),
   },
 });
