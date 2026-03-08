@@ -11,6 +11,14 @@ let loading = true;
 let error: string | null = null;
 let expandedZones: Set<string> = new Set();
 let expandedMissions: Set<string> = new Set();
+let showBg = false;
+let customBgPath = '';
+
+const alertsBgDiv = () => {
+  if (!showBg) return '';
+  if (customBgPath) return `<div class="alerts-bg" style="background: url('glow-bg://load/${customBgPath.replace(/\\/g, '/')}') center / cover no-repeat, linear-gradient(135deg, #0d0d1a 0%, #1a1030 40%, #0d0d1a 100%)"></div>`;
+  return '<div class="alerts-bg"></div>';
+};
 
 // ─── Data Fetching ───────────────────────────────────────────
 
@@ -37,6 +45,7 @@ function draw(): void {
   if (loading) {
     el.innerHTML = `
       <div class="page-alerts">
+        ${alertsBgDiv()}
         <div class="alerts-header">
           <h1 class="page-title">Alerts</h1>
           <p class="page-subtitle">Save the World mission alerts &amp; rewards</p>
@@ -53,6 +62,7 @@ function draw(): void {
   if (error) {
     el.innerHTML = `
       <div class="page-alerts">
+        ${alertsBgDiv()}
         <div class="alerts-header">
           <h1 class="page-title">Alerts</h1>
           <p class="page-subtitle">Save the World mission alerts &amp; rewards</p>
@@ -80,6 +90,7 @@ function draw(): void {
 
   el.innerHTML = `
     <div class="page-alerts">
+      ${alertsBgDiv()}
       <div class="alerts-header">
         <h1 class="page-title">Alerts</h1>
         <p class="page-subtitle">Save the World mission alerts &amp; rewards</p>
@@ -92,10 +103,6 @@ function draw(): void {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
             ${totalAlerts} alerts
           </span>
-          <button class="btn btn-sm btn-accent" id="alerts-refresh" title="Refresh alerts">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
-            Refresh
-          </button>
         </div>
       </div>
       <div class="alerts-zones">
@@ -286,13 +293,6 @@ function renderRewardRow(item: AlertRewardItem, type: string): string {
 // ─── Events ──────────────────────────────────────────────────
 
 function bindEvents(): void {
-  // Refresh button
-  el?.querySelector('#alerts-refresh')?.addEventListener('click', () => {
-    expandedZones.clear();
-    expandedMissions.clear();
-    loadAlerts();
-  });
-
   // Zone toggles — manipulate DOM directly to preserve scroll position
   el?.querySelectorAll('[data-zone-toggle]').forEach((header) => {
     header.addEventListener('click', () => {
@@ -352,13 +352,7 @@ function bindEvents(): void {
 export const alertsPage: PageDefinition = {
   id: 'alerts',
   label: 'Alerts',
-  icon: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none"
-          stroke="currentColor" stroke-width="2" stroke-linecap="round"
-          stroke-linejoin="round">
-          <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
-          <line x1="12" y1="9" x2="12" y2="13"/>
-          <line x1="12" y1="17" x2="12.01" y2="17"/>
-        </svg>`,
+  icon: `<img src="assets/icons/fnui/BR-STW/stworld.png" alt="Alerts" width="18" height="18" style="object-fit:contain;vertical-align:middle" />`,
   order: 15,
 
   async render(container: HTMLElement): Promise<void> {
@@ -368,6 +362,9 @@ export const alertsPage: PageDefinition = {
     error = null;
     expandedZones = new Set();
     expandedMissions = new Set();
+    const s = await window.glowAPI.storage.get<{ pageBackgrounds?: boolean; customBackgrounds?: Record<string, string> }>('settings');
+    showBg = s?.pageBackgrounds ?? false;
+    customBgPath = s?.customBackgrounds?.alerts || '';
     await loadAlerts();
   },
 

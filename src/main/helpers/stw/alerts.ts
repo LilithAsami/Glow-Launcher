@@ -34,7 +34,7 @@ function getUTCDateKey(): string {
 
 // ── Translation ────────────────────────────────────────────
 
-function traducir(key: string): string {
+export function traducir(key: string): string {
   if (!key) return '';
   if (guiaMap[key]) return guiaMap[key];
   if (esESMap[key]) return esESMap[key];
@@ -183,7 +183,7 @@ function getZone(
 
   // PRIORITY 3: Ventures
   const hasVentures = (arr: string[]) =>
-    arr.some((r) => r.toLowerCase().includes('aventura') || r.toLowerCase().includes('phoenix'));
+    arr.some((r) => r.toLowerCase().includes('aventura') || r.toLowerCase().includes('venture'));
   if (hasVentures(rewardNames) || hasVentures(alertNames)) return 'Ventures';
 
   // PRIORITY 4: Geographic zone by power
@@ -192,7 +192,7 @@ function getZone(
 
 // ── Resource icon mapping ──────────────────────────────────
 
-function extractRarity(itemType: string): string | null {
+export function extractRarity(itemType: string): string | null {
   if (!itemType) return null;
   const rarityMatch = itemType.match(/_(vr|sr|er|r|uc|c)(?:_|$)/i);
   return rarityMatch ? rarityMatch[1].toLowerCase() : null;
@@ -225,7 +225,8 @@ const ACCOUNT_RESOURCE_ICONS: Record<string, string> = {
   voucher_cardpack_bronze: 'assets/icons/stw/resources/voucher_cardpack_bronze.png',
   voucher_cardpack_jackpot: 'assets/icons/stw/resources/voucher_cardpack_jackpot.png',
   voucher_basicpack: 'assets/icons/stw/resources/voucher_basicpack.png',
-  eventcurrency_scaling: 'assets/icons/stw/currency/eventcurrency_scaling.png',
+  eventcurrency_scaling: 'assets/icons/stw/resources/eventcurrency_scaling.png',
+  eventscaling: 'assets/icons/stw/resources/eventscaling.png',
   eventcurrency_adventure: 'assets/icons/stw/currency/eventcurrency_adventure.png',
   eventcurrency_snowballs: 'assets/icons/stw/currency/eventcurrency_snowballs.png',
   eventcurrency_candy: 'assets/icons/stw/currency/eventcurrency_candy.png',
@@ -247,7 +248,7 @@ const INGREDIENT_ICONS: Record<string, string> = {
   reagent_sup_quartz: 'assets/icons/stw/ingredients/quartz.png',
 };
 
-function getResourceIcon(itemType: string, translatedName: string): string | null {
+export function getResourceIcon(itemType: string, translatedName: string): string | null {
   if (!itemType) return null;
   const tipo = itemType.toLowerCase();
 
@@ -317,14 +318,17 @@ function getResourceIcon(itemType: string, translatedName: string): string | nul
         return `assets/icons/stw/resources/reagent_alteration_upgrade_${rarityMatch[1]}.png`;
       }
     }
-    if (tipo.includes('zcp_reagent')) return 'assets/icons/stw/resources/reagent_c_t01.png';
-    if (tipo.includes('zcp_heroxp') || tipo.includes('zcp_personnelxp') || tipo.includes('zcp_schematicxp')) {
-      return 'assets/icons/stw/resources/heroxp.png';
-    }
+    if (tipo.includes('reagent_c_t01')) return 'assets/icons/stw/resources/reagent_c_t01.png';
+    if (tipo.includes('reagent_c_t02')) return 'assets/icons/stw/resources/reagent_c_t02.png';
+    if (tipo.includes('reagent_c_t03')) return 'assets/icons/stw/resources/reagent_c_t03.png';
+    if (tipo.includes('reagent_c_t04')) return 'assets/icons/stw/resources/reagent_c_t04.png';
+    if (tipo.includes('zcp_heroxp')) return 'assets/icons/stw/resources/heroxp.png';
+    if (tipo.includes('zcp_personnelxp')) return 'assets/icons/stw/resources/personnelxp.png';
+    if (tipo.includes('zcp_schematicxp')) return 'assets/icons/stw/resources/schematicxp.png';
     if (tipo.includes('zcp_phoenixxp')) return 'assets/icons/stw/resources/phoenixxp.png';
     return null;
+  
   }
-
   // Token
   if (tipo.includes('token:')) {
     return null;

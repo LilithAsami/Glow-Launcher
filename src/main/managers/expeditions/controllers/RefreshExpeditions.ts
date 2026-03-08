@@ -1,6 +1,6 @@
-import { log } from '../../../../helpers/logger';
-import { Endpoints } from '../../../../helpers/endpoints';
-import { composeMCP } from '../../../../helpers/epic/utils/mcp';
+import { log } from '../../logger';
+import { Endpoints } from '../../../helpers/endpoints';
+import { composeMCP } from '../../../utils/mcp';
 
 export interface RefreshExpeditionsResult {
   success: boolean;

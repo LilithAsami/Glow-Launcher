@@ -44,12 +44,15 @@ export interface LockerFilters {
   rarities: string[]; // ['all'] or ['legendary', 'epic', 'marvel', ...]
   chapters: string[]; // ['all'] or ['1', '2', '3', ...]
   exclusive: boolean; // true = only exclusives (based on exclusives.json IDs)
+  equippedItemIds?: string[]; // if provided, only include these template IDs
 }
 
 // Tipos de cosméticos válidos
 export const COSMETIC_TYPES = [
   'all', 'outfit', 'backpack', 'pickaxe', 'glider', 'emote',
-  'spray', 'emoticon', 'toy', 'wrap', 'music', 'loadingscreen', 'contrail'
+  'spray', 'emoticon', 'toy', 'wrap', 'music', 'loadingscreen', 'contrail',
+  'track', 'banner', 'guitar', 'bass', 'drum', 'keyboard', 'microphone',
+  'vehicle', 'companion'
 ] as const;
 
 // Rarezas disponibles (ordenadas por peso)

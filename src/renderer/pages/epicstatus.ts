@@ -8,6 +8,8 @@ let data: any = null;
 let error: string | null = null;
 /** Track which groups are collapsed (by group id) */
 const collapsed = new Set<string>();
+let autoRefreshTimer: ReturnType<typeof setInterval> | null = null;
+const AUTO_REFRESH_MS = 3 * 60 * 1000; // 3 minutes
 
 // ─── Helpers ──────────────────────────────────────────────────
 
@@ -101,7 +103,7 @@ function draw(): void {
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
           <span>${esc(error)}</span>
         </div>
-        <button class="epicstatus-btn epicstatus-btn--primary" id="es-refresh">Retry</button>
+
       ` : data ? renderData() : `
         <div class="epicstatus-loading">
           <div class="epicstatus-spinner"></div>
@@ -130,9 +132,6 @@ function renderData(): string {
     <div class="epicstatus-banner ${indicatorClass(data.overallIndicator)}">
       <div class="epicstatus-banner-dot"></div>
       <span class="epicstatus-banner-text">${esc(data.overallStatus)}</span>
-      <button class="epicstatus-btn epicstatus-btn--ghost" id="es-refresh" title="Refresh">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
-      </button>
     </div>
 
     <!-- Fortnite lightswitch -->
@@ -274,9 +273,6 @@ function renderData(): string {
 function bindEvents(): void {
   if (!el) return;
 
-  const refreshBtn = el.querySelector('#es-refresh') as HTMLButtonElement | null;
-  refreshBtn?.addEventListener('click', () => fetchStatus());
-
   // Group collapse/expand
   el.querySelectorAll('.epicstatus-group-header').forEach((header) => {
     header.addEventListener('click', () => {
@@ -318,14 +314,19 @@ async function fetchStatus(): Promise<void> {
 export const epicStatusPage: PageDefinition = {
   id: 'epicstatus',
   label: 'Epic Status',
-  icon: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>`,
+  icon: `<img src="assets/icons/fnui/EG/eg-status.png" alt="Epic Status" width="18" height="18" style="object-fit:contain;vertical-align:middle" />`,
   order: 21,
   render(container) {
     el = container;
     draw();
     if (!data && !loading) fetchStatus();
+    // Auto-refresh every 3 minutes while on this page
+    autoRefreshTimer = setInterval(() => {
+      if (!loading) fetchStatus();
+    }, AUTO_REFRESH_MS);
   },
   cleanup() {
+    if (autoRefreshTimer) { clearInterval(autoRefreshTimer); autoRefreshTimer = null; }
     el = null;
   },
 };

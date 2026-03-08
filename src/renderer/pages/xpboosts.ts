@@ -13,8 +13,23 @@ let displayName = '';
 let boostType: 'personal' | 'teammate' = 'personal';
 let amount = 1;
 let targetAccountId = '';
+let targetDisplayName = '';
 let fetchError = '';
 let consumeResult: { success: boolean; consumed: number; failed: number; error?: string } | null = null;
+
+// ── Player search state ───────────────────────────────────────
+let searchTerm = '';
+let searching = false;
+let searchResults: { accountId: string; displayName: string; platform?: string }[] = [];
+let searchError = '';
+let showBg = false;
+let customBgPath = '';
+
+const xpBgDiv = () => {
+  if (!showBg) return '';
+  if (customBgPath) return `<div class="xpboost-bg" style="background: url('glow-bg://load/${customBgPath.replace(/\\/g, '/')}') center / cover no-repeat, linear-gradient(135deg, #0d0d1a 0%, #1a1030 40%, #0d0d1a 100%)"></div>`;
+  return '<div class="xpboost-bg"></div>';
+};
 
 // ─── Helpers ──────────────────────────────────────────────────
 
@@ -33,6 +48,7 @@ function draw(): void {
 
   el.innerHTML = `
     <div class="xpboost-page">
+      ${xpBgDiv()}
       <div class="xpboost-header">
         <h1 class="page-title">XP Boosts</h1>
         <p class="page-subtitle">Activate Save the World XP Boosts (Personal or Teammate)</p>
@@ -85,10 +101,40 @@ function draw(): void {
 
           ${boostType === 'teammate' ? `
             <div class="xpboost-target-row">
-              <label class="xpboost-label">Target Account ID</label>
-              <input type="text" class="xpboost-input" id="xpboost-target"
-                     placeholder="Account ID to send boost to"
-                     value="${esc(targetAccountId)}" spellcheck="false" autocomplete="off" />
+              <label class="xpboost-label">Target Player</label>
+              <div class="xpboost-search-row">
+                <input type="text" class="xpboost-input xpboost-search-input" id="xpboost-search"
+                       placeholder="Search by name or 32-char Account ID..."
+                       value="${esc(searchTerm)}" spellcheck="false" autocomplete="off" />
+                <button class="xpboost-search-btn" id="xpboost-search-btn" ${searching ? 'disabled' : ''}>
+                  ${searching
+                    ? `<div class="xpboost-spinner"></div>`
+                    : `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>`}
+                  Search
+                </button>
+              </div>
+              ${searchError ? `<div class="xpboost-search-error">${esc(searchError)}</div>` : ''}
+              ${searchResults.length > 0 ? `
+                <div class="xpboost-search-results">
+                  ${searchResults.map((r) => `
+                    <div class="xpboost-search-result ${r.accountId === targetAccountId ? 'xpboost-search-result--selected' : ''}"
+                         data-select-player="${r.accountId}" data-player-name="${esc(r.displayName)}">
+                      <div class="xpboost-search-result-info">
+                        <span class="xpboost-search-result-name">${esc(r.displayName)}</span>
+                        <span class="xpboost-search-result-id">${r.accountId.slice(0, 12)}...</span>
+                      </div>
+                      ${r.platform ? `<span class="xpboost-search-platform xpboost-search-platform--${r.platform.toLowerCase()}">${esc(r.platform)}</span>` : ''}
+                    </div>
+                  `).join('')}
+                </div>
+              ` : ''}
+              ${targetAccountId ? `
+                <div class="xpboost-selected-player">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                  <span>Sending to: <strong>${esc(targetDisplayName || targetAccountId)}</strong></span>
+                  <button class="xpboost-clear-target" id="xpboost-clear-target" title="Clear selection">✕</button>
+                </div>
+              ` : ''}
             </div>
           ` : ''}
 
@@ -149,6 +195,9 @@ function bindEvents(): void {
         boostType = t;
         amount = 1;
         consumeResult = null;
+        searchResults = [];
+        searchTerm = '';
+        searchError = '';
         draw();
       }
     });
@@ -177,15 +226,88 @@ function bindEvents(): void {
     draw();
   });
 
-  const targetInput = el.querySelector('#xpboost-target') as HTMLInputElement | null;
-  targetInput?.addEventListener('input', () => {
-    targetAccountId = targetInput.value.trim();
+  // Player search
+  const searchInput = el.querySelector('#xpboost-search') as HTMLInputElement | null;
+  searchInput?.addEventListener('input', () => {
+    searchTerm = searchInput.value;
+  });
+  searchInput?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      el?.querySelector('#xpboost-search-btn')?.dispatchEvent(new Event('click'));
+    }
+  });
+
+  el.querySelector('#xpboost-search-btn')?.addEventListener('click', searchPlayers);
+
+  // Select player from results
+  el.querySelectorAll('[data-select-player]').forEach((row) => {
+    row.addEventListener('click', () => {
+      const accId = (row as HTMLElement).dataset.selectPlayer!;
+      const name = (row as HTMLElement).dataset.playerName || accId;
+      targetAccountId = accId;
+      targetDisplayName = name;
+      draw();
+    });
+  });
+
+  // Clear target selection
+  el.querySelector('#xpboost-clear-target')?.addEventListener('click', () => {
+    targetAccountId = '';
+    targetDisplayName = '';
+    searchResults = [];
+    searchTerm = '';
+    draw();
   });
 
   el.querySelector('#xpboost-consume')?.addEventListener('click', consumeBoosts);
 }
 
 // ─── Actions ──────────────────────────────────────────────────
+
+async function searchPlayers(): Promise<void> {
+  if (searching) return;
+  const term = searchTerm.trim();
+  if (!term) return;
+
+  searching = true;
+  searchError = '';
+  searchResults = [];
+  draw();
+
+  try {
+    // If it's a 32-char hex account ID, look it up directly
+    if (/^[a-f0-9]{32}$/i.test(term)) {
+      searchResults = [{ accountId: term.toLowerCase(), displayName: term.toLowerCase() }];
+      try {
+        const res = await window.glowAPI.stalk.search(term);
+        if (res.success && res.results.length > 0) {
+          searchResults = res.results.map((r: any) => ({
+            accountId: r.accountId,
+            displayName: r.displayName,
+            platform: r.platform,
+          }));
+        }
+      } catch {}
+    } else {
+      // Search by name
+      const res = await window.glowAPI.stalk.search(term);
+      if (res.success && res.results.length > 0) {
+        searchResults = res.results.map((r: any) => ({
+          accountId: r.accountId,
+          displayName: r.displayName,
+          platform: r.platform,
+        }));
+      } else {
+        searchError = 'No players found';
+      }
+    }
+  } catch (err: any) {
+    searchError = err.message || 'Search failed';
+  } finally {
+    searching = false;
+    draw();
+  }
+}
 
 async function fetchBoosts(): Promise<void> {
   if (loading) return;
@@ -219,7 +341,7 @@ async function consumeBoosts(): Promise<void> {
   if (amount < 1 || amount > max) return;
 
   if (boostType === 'teammate' && !targetAccountId) {
-    consumeResult = { success: false, consumed: 0, failed: 0, error: 'Please enter a target Account ID' };
+    consumeResult = { success: false, consumed: 0, failed: 0, error: 'Please search and select a target player first' };
     draw();
     return;
   }
@@ -259,6 +381,11 @@ function onAccountChanged() {
   consumeResult = null;
   fetchError = '';
   amount = 1;
+  targetAccountId = '';
+  targetDisplayName = '';
+  searchTerm = '';
+  searchResults = [];
+  searchError = '';
   fetchBoosts();
 }
 
@@ -269,8 +396,11 @@ export const xpBoostsPage: PageDefinition = {
   label: 'XP Boosts',
   icon: `<img src="assets/icons/stw/resources/smallxpboost.png" alt="XP Boosts" width="18" height="18" style="vertical-align:middle" />`,
   order: 23,
-  render(container) {
+  async render(container) {
     el = container;
+    const s = await window.glowAPI.storage.get<{ pageBackgrounds?: boolean; customBackgrounds?: Record<string, string> }>('settings').catch(() => null);
+    showBg = s?.pageBackgrounds ?? false;
+    customBgPath = s?.customBackgrounds?.xpboosts || '';
     fetchBoosts();
     window.addEventListener('glow:account-switched', onAccountChanged);
   },

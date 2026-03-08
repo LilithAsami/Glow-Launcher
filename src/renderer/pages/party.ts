@@ -74,7 +74,7 @@ function draw(): void {
         )}
 
         <!-- Toggle Privacy -->
-        ${renderActionCard('toggle-privacy', 'Toggle Privacy', 'Toggles between Public and Private. Auto-reverts after 5 seconds.',
+        ${renderActionCard('toggle-privacy', 'Toggle Privacy', 'Switches between Public and Private party mode.',
           `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`,
           `<button class="party-action-btn" data-action="toggle-privacy" ${getCard('toggle-privacy').loading ? 'disabled' : ''}>
             ${getCard('toggle-privacy').loading ? '<div class="party-btn-spinner"></div>' : 'Toggle Privacy'}
@@ -138,27 +138,17 @@ function draw(): void {
         <!-- KickCollect -->
         ${renderActionCard('kick-collect', 'Kick & Collect', 'Collect STW rewards and leave the party.',
           `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`,
-          `<div class="party-force-row">
-            <label class="party-checkbox-label">
-              <input type="checkbox" class="party-checkbox" id="kickcollect-force" /> Force (skip STW check)
-            </label>
-            <button class="party-action-btn party-action-btn--sm party-action-btn--warn" data-action="kick-collect" ${getCard('kick-collect').loading ? 'disabled' : ''}>
-              ${getCard('kick-collect').loading ? '<div class="party-btn-spinner"></div>' : 'Kick & Collect'}
-            </button>
-          </div>`
+          `<button class="party-action-btn party-action-btn--warn" data-action="kick-collect" ${getCard('kick-collect').loading ? 'disabled' : ''}>
+            ${getCard('kick-collect').loading ? '<div class="party-btn-spinner"></div>' : 'Kick & Collect'}
+          </button>`
         )}
 
         <!-- KickCollect-Expulse -->
         ${renderActionCard('kick-collect-expulse', 'Kick All & Collect', 'Kick all party members, collect STW rewards, then leave.',
           `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>`,
-          `<div class="party-force-row">
-            <label class="party-checkbox-label">
-              <input type="checkbox" class="party-checkbox" id="kickcollect-expulse-force" /> Force (skip STW check)
-            </label>
-            <button class="party-action-btn party-action-btn--sm party-action-btn--danger" data-action="kick-collect-expulse" ${getCard('kick-collect-expulse').loading ? 'disabled' : ''}>
-              ${getCard('kick-collect-expulse').loading ? '<div class="party-btn-spinner"></div>' : 'Kick All & Collect'}
-            </button>
-          </div>`
+          `<button class="party-action-btn party-action-btn--danger" data-action="kick-collect-expulse" ${getCard('kick-collect-expulse').loading ? 'disabled' : ''}>
+            ${getCard('kick-collect-expulse').loading ? '<div class="party-btn-spinner"></div>' : 'Kick All & Collect'}
+          </button>`
         )}
 
         <!-- Leave Party -->
@@ -301,16 +291,11 @@ async function handleAction(action: string): Promise<void> {
 
   // ── Capture DOM values BEFORE draw() destroys them ──
   let savedMemberId = '';
-  let savedForce = false;
 
   if (action === 'kick') {
     savedMemberId = (el?.querySelector('#kick-select') as HTMLSelectElement)?.value || '';
   } else if (action === 'promote') {
     savedMemberId = (el?.querySelector('#promote-select') as HTMLSelectElement)?.value || '';
-  } else if (action === 'kick-collect') {
-    savedForce = (el?.querySelector('#kickcollect-force') as HTMLInputElement)?.checked || false;
-  } else if (action === 'kick-collect-expulse') {
-    savedForce = (el?.querySelector('#kickcollect-expulse-force') as HTMLInputElement)?.checked || false;
   }
 
   state.loading = true;
@@ -352,11 +337,11 @@ async function handleAction(action: string): Promise<void> {
         break;
       }
       case 'kick-collect': {
-        res = await window.glowAPI.party.kickCollect(savedForce);
+        res = await window.glowAPI.party.kickCollect(true);
         break;
       }
       case 'kick-collect-expulse': {
-        res = await window.glowAPI.party.kickCollectExpulse(savedForce);
+        res = await window.glowAPI.party.kickCollectExpulse(true);
         break;
       }
       default:
@@ -422,7 +407,7 @@ function escapeAttr(str: string): string {
 export const partyPage: PageDefinition = {
   id: 'party',
   label: 'Party',
-  icon: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>`,
+  icon: `<img src="assets/icons/fnui/BR-STW/party.png" alt="Party" width="18" height="18" style="object-fit:contain;vertical-align:middle" />`,
   order: 21,
   render(container) {
     el = container;

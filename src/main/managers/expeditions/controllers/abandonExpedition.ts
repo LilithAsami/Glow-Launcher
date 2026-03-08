@@ -1,5 +1,5 @@
-import { log } from '../../../../helpers/logger';
-import { composeMCP } from '../../../../helpers/epic/utils/mcp';
+import { log } from '../../logger';
+import { composeMCP } from '../../../utils/mcp';
 
 export interface AbandonExpeditionResult {
   success: boolean;

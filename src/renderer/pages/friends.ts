@@ -547,14 +547,7 @@ function onAccountSwitch() {
 export const friendsPage: PageDefinition = {
   id: 'friends',
   label: 'Friends',
-  icon: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none"
-          stroke="currentColor" stroke-width="2" stroke-linecap="round"
-          stroke-linejoin="round">
-          <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
-          <circle cx="9" cy="7" r="4"/>
-          <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
-          <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
-        </svg>`,
+  icon: `<img src="assets/icons/fnui/EG/friends.png" alt="Friends" width="18" height="18" style="object-fit:contain;vertical-align:middle" />`,
   order: 16,
 
   async render(container: HTMLElement): Promise<void> {

@@ -153,6 +153,8 @@ function onStatusUpdate(newStatuses: AutoKickStatus[]): void {
     if (idx >= 0) statuses[idx] = s;
     else statuses.push(s);
   }
+  const active = statuses.filter((s) => s.isConnected).length;
+  window.glowAPI.discordRpc.setDetail(active > 0 ? `Monitoring ${active} account${active !== 1 ? 's' : ''}` : null);
   draw();
 }
 
@@ -197,11 +199,7 @@ async function reload(): Promise<void> {
 export const autokickPage: PageDefinition = {
   id: 'autokick',
   label: 'AutoKick',
-  icon: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none"
-          stroke="currentColor" stroke-width="2" stroke-linecap="round"
-          stroke-linejoin="round">
-          <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
-        </svg>`,
+  icon: `<img src="assets/icons/fnui/Automated/autokick.png" alt="AutoKick" width="18" height="18" style="object-fit:contain;vertical-align:middle" />`,
   order: 20,
 
   async render(container: HTMLElement): Promise<void> {

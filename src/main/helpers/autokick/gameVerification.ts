@@ -1,6 +1,19 @@
 /**
  * AutoKick STW Game Verification Helper
- * Verifica si una cuenta está en una partida STW completada
+ *
+ * Detección de misión completada:
+ *
+ * 1. El evento XMPP PARTY_UPDATED trae `party_state_updated` con el meta del party.
+ *    Se lee `Default:CampaignInfo_j` → CampaignInfo.matchmakingState directamente
+ *    del payload XMPP, SIN hacer ninguna llamada HTTP. (igual que Aerial Launcher)
+ *
+ * 2. Cuando matchmakingState === 'JoiningExistingSession' (en misión STW):
+ *    - Se captura baseline de `matches_played` vía MCP QueryProfile campaign
+ *    - Se hace polling MCP cada N segundos hasta que matches_played > baseline
+ *    - Eso indica pantalla de victoria (misión completada)
+ *
+ * 3. Si el jugador sale sin completar, matchmakingState deja de ser JoiningExistingSession
+ *    → polling del party endpoint para detectarlo en waitForMissionComplete.
  */
 
 import axios from 'axios';
@@ -8,6 +21,9 @@ import { Endpoints } from '../endpoints';
 import { refreshAccountToken } from '../auth/tokenRefresh';
 import type { Storage } from '../../storage';
 
+// ─── Interfaces ───────────────────────────────────────────────
+
+// Mantenida por compatibilidad con imports externos
 export interface STWGameStatus {
   isInGame: boolean;
   isSTW: boolean;
@@ -17,195 +33,182 @@ export interface STWGameStatus {
   refreshedToken?: string;
 }
 
+export interface MCPMatchState {
+  matchesPlayed: number;
+  refreshedToken?: string;
+}
+
+// ─── Helper: leer matchmakingState del meta del party (sin HTTP) ───────────
+
 /**
- * Verifica si una cuenta está en una partida STW y si está completada (started === false)
+ * Extrae matchmakingState de un objeto meta de party.
+ * El meta proviene directamente del payload XMPP (party_state_updated)
+ * o del endpoint del party. No hace ninguna llamada HTTP.
  */
+export function extractMatchmakingState(meta: Partial<Record<string, string>>): string | null {
+  try {
+    const raw = meta['Default:CampaignInfo_j'];
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed?.CampaignInfo?.matchmakingState ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Devuelve true si el meta indica que la cuenta está en una misión STW activa.
+ */
+export function isInSTWMission(meta: Partial<Record<string, string>>): boolean {
+  return extractMatchmakingState(meta) === 'JoiningExistingSession';
+}
+
+// ─── Helper: obtener meta del party vía HTTP (solo para backup polling) ─────
+
+/**
+ * Llama al party endpoint y devuelve el meta del party actual.
+ * Usar únicamente en el backup polling (no en el flujo principal XMPP).
+ */
+export async function fetchPartyMeta(
+  accountId: string,
+  accessToken: string,
+  storage?: Storage
+): Promise<{ meta: Partial<Record<string, string>>; refreshedToken?: string }> {
+  const call = async (token: string) => {
+    const response = await axios.get(
+      `${Endpoints.BR_PARTY}/user/${accountId}`,
+      { headers: { Authorization: `Bearer ${token}` }, timeout: 10000 }
+    );
+    const meta: Partial<Record<string, string>> = response.data?.current?.[0]?.meta ?? {};
+    return { meta };
+  };
+
+  try {
+    return await call(accessToken);
+  } catch (error: any) {
+    if (error.response?.status === 401 && storage) {
+      const refreshed = await refreshAccountToken(storage, accountId);
+      if (refreshed) {
+        const result = await call(refreshed);
+        return { ...result, refreshedToken: refreshed };
+      }
+    }
+    throw error;
+  }
+}
+
+// ─── MCP: leer matches_played ───────────────────────────────────────
+
+/**
+ * Lee matches_played del profile campaign vía MCP QueryProfile.
+ * Este valor se incrementa exactamente al completar una misión STW
+ * (aparece en pantalla de victoria), sin importar si hay recompensas.
+ */
+export async function getMCPMatchesPlayed(
+  accountId: string,
+  accessToken: string,
+  storage?: Storage
+): Promise<MCPMatchState> {
+  const call = async (token: string): Promise<MCPMatchState> => {
+    const response = await axios.post(
+      `${Endpoints.MCP}/${accountId}/client/QueryProfile?profileId=campaign`,
+      {},
+      {
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        timeout: 15000,
+      }
+    );
+    const matchesPlayed: number =
+      response.data?.profileChanges?.[0]?.profile?.stats?.attributes?.matches_played ?? 0;
+    return { matchesPlayed };
+  };
+
+  try {
+    return await call(accessToken);
+  } catch (error: any) {
+    if (error.response?.status === 401 && storage) {
+      const refreshed = await refreshAccountToken(storage, accountId);
+      if (refreshed) {
+        const result = await call(refreshed);
+        return { ...result, refreshedToken: refreshed };
+      }
+    }
+    throw error;
+  }
+}
+
+// ─── waitForMissionComplete ────────────────────────────────────────
+
+/**
+ * Espera hasta que la misión se complete detectando incremento de matches_played.
+ * Comprueba cada intervalMs. Sin límite de tiempo.
+ *
+ * También detecta salida sin completar: si el party meta deja de indicar
+ * JoiningExistingSession antes de que suba matches_played, devuelve false.
+ */
+export async function waitForMissionComplete(
+  accountId: string,
+  accessToken: string,
+  storage: Storage | undefined,
+  matchesPlayedBaseline: number,
+  intervalMs: number = 5000
+): Promise<boolean> {
+  let currentToken = accessToken;
+
+  while (true) {
+    try {
+      // Comprobar matches_played via MCP
+      const mcpState = await getMCPMatchesPlayed(accountId, currentToken, storage);
+      if (mcpState.refreshedToken) currentToken = mcpState.refreshedToken;
+
+      if (mcpState.matchesPlayed > matchesPlayedBaseline) {
+        // matches_played subió → misión completada (pantalla de victoria)
+        return true;
+      }
+
+      // Check secundario: ¿sigue en misión? (detectar salida sin completar)
+      try {
+        const partyResult = await fetchPartyMeta(accountId, currentToken, storage);
+        if (partyResult.refreshedToken) currentToken = partyResult.refreshedToken;
+        if (!isInSTWMission(partyResult.meta)) {
+          // Salió de la misión sin completarla
+          return false;
+        }
+      } catch {
+        // Si falla el party check, continuar mirando MCP
+      }
+    } catch {
+      // Error de red, continuar
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+}
+
+// ─── Legacy (compatibilidad) ───────────────────────────────────────────
+
+/** @deprecated Usar isInSTWMission + getMCPMatchesPlayed */
 export async function checkSTWGameStatus(
   accountId: string,
   accessToken: string,
   storage?: Storage
 ): Promise<STWGameStatus> {
   try {
-    const response = await axios.get(
-      `${Endpoints.MATCHMAKING}/${accountId}`,
-      {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-        timeout: 10000,
-      }
-    );
-
-    const data = response.data;
-    const session = Array.isArray(data) && data.length > 0 ? data[0] : null;
-    
-    if (!session) {
-      return {
-        isInGame: false,
-        isSTW: false,
-        started: false,
-        sessionId: null,
-        gameMode: null,
-      };
-    }
-
-    const sessionId = session.id || null;
-    const attributes = session.attributes || {};
-    const playlist = attributes.GAMEMODE_s || attributes.PLAYLIST_s || null;
-    const started = session.started === true;
-    
-    const isSTW = 
-      playlist?.toLowerCase().includes('pve') ||
-      playlist?.toLowerCase().includes('stw') ||
-      playlist?.toLowerCase().includes('savetheworld') ||
-      playlist?.toLowerCase().includes('fortoutpost');
-
-    return {
-      isInGame: !!sessionId,
-      isSTW,
-      started,
-      sessionId,
-      gameMode: playlist,
-    };
-  } catch (error: any) {
-    // Si es 404 o 204, no está en partida
-    if (error.response?.status === 404 || error.response?.status === 204) {
-      return {
-        isInGame: false,
-        isSTW: false,
-        started: false,
-        sessionId: null,
-        gameMode: null,
-      };
-    }
-    
-    // Si es 401 (token expirado) y tenemos storage, intentar refrescar
-    if (error.response?.status === 401 && storage) {
-      const refreshed = await refreshAccountToken(storage, accountId);
-      
-      if (refreshed) {
-        // Reintentar con el nuevo token
-        const retryResponse = await axios.get(
-          `${Endpoints.MATCHMAKING}/${accountId}`,
-          {
-            headers: {
-              Authorization: `Bearer ${refreshed}`,
-            },
-            timeout: 10000,
-          }
-        );
-        
-        const retryData = retryResponse.data;
-        const retrySession = Array.isArray(retryData) && retryData.length > 0 ? retryData[0] : null;
-        
-        if (!retrySession) {
-          return {
-            isInGame: false,
-            isSTW: false,
-            started: false,
-            sessionId: null,
-            gameMode: null,
-            refreshedToken: refreshed,
-          };
-        }
-        
-        const sessionId = retrySession.id || null;
-        const attributes = retrySession.attributes || {};
-        const playlist = attributes.GAMEMODE_s || attributes.PLAYLIST_s || null;
-        const started = retrySession.started === true;
-        
-        const isSTW = 
-          playlist?.toLowerCase().includes('pve') ||
-          playlist?.toLowerCase().includes('stw') ||
-          playlist?.toLowerCase().includes('savetheworld') ||
-          playlist?.toLowerCase().includes('fortoutpost');
-        
-        return {
-          isInGame: !!sessionId,
-          isSTW,
-          started,
-          sessionId,
-          gameMode: playlist,
-          refreshedToken: refreshed,
-        };
-      }
-    }
-    
-    throw error;
+    const { meta } = await fetchPartyMeta(accountId, accessToken, storage);
+    const inGame = isInSTWMission(meta);
+    return { isInGame: inGame, isSTW: inGame, started: inGame, sessionId: null, gameMode: extractMatchmakingState(meta) };
+  } catch {
+    return { isInGame: false, isSTW: false, started: false, sessionId: null, gameMode: null };
   }
 }
 
-/**
- * Espera hasta que la cuenta entre en una partida (started === true)
- * Comprueba cada intervalMs durante maxAttempts intentos
- */
+/** @deprecated No necesario con el nuevo flujo XMPP directo */
 export async function waitForGameStart(
-  accountId: string,
-  accessToken: string,
-  maxAttempts: number = 30,
-  intervalMs: number = 5000,
-  storage?: Storage
-): Promise<{ started: boolean; newToken?: string }> {
-  let currentToken = accessToken;
-
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    try {
-      const status = await checkSTWGameStatus(accountId, currentToken, storage);
-
-      if (status.refreshedToken) {
-        currentToken = status.refreshedToken;
-      }
-
-      // DEBE ESPERAR A QUE started === TRUE (no solo estar en partida)
-      if (status.isInGame && status.isSTW && status.started === true) {
-        return { started: true, newToken: status.refreshedToken };
-      }
-
-      if (attempt < maxAttempts) {
-        await new Promise((resolve) => setTimeout(resolve, intervalMs));
-      }
-    } catch (error) {
-      // Continuar intentando
-    }
-  }
-
-  return { started: false };
-}
-
-/**
- * Espera hasta que la misión se complete (started === false)
- * Comprueba cada 1s
- */
-export async function waitForMissionComplete(
-  accountId: string,
-  accessToken: string,
-  storage?: Storage
-): Promise<boolean> {
-  let currentToken = accessToken;
-
-  while (true) {
-    try {
-      const status = await checkSTWGameStatus(accountId, currentToken, storage);
-
-      if (status.refreshedToken) {
-        currentToken = status.refreshedToken;
-      }
-
-      // Si ya no está en partida o no es STW, salir
-      if (!status.isInGame || !status.isSTW) {
-        return false;
-      }
-
-      // Esperar a que started cambie de TRUE a FALSE (misión completada)
-      if (status.started === false) {
-        return true;
-      }
-
-      // Esperar 1 segundo antes de la siguiente verificación
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-    } catch (error) {
-      // Continuar intentando en caso de error
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-    }
-  }
+  _accountId: string,
+  _accessToken: string,
+  _maxAttempts?: number,
+  _intervalMs?: number,
+  _storage?: Storage
+): Promise<{ started: boolean; matchesPlayedBaseline: number; newToken?: string }> {
+  return { started: false, matchesPlayedBaseline: 0 };
 }

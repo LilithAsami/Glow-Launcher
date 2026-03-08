@@ -4,11 +4,19 @@ let el: HTMLElement | null = null;
 
 // ── State ─────────────────────────────────────────────────────
 let dupeLoading = false;
-let dupeResult: { success: boolean; message: string; storageStatus?: string | null } | null = null;
+let dupeResult: { success: boolean; message: string } | null = null;
 let dupeWaiting = false;
 let dupeTimeRemaining = 0;
 let dupeTotalWait = 0;
 let dupeCountdownInterval: ReturnType<typeof setInterval> | null = null;
+let showBg = false;
+let customBgPath = '';
+
+const dupeBgDiv = () => {
+  if (!showBg) return '';
+  if (customBgPath) return `<div class="dupe-bg" style="background: url('glow-bg://load/${customBgPath.replace(/\\/g, '/')}') center / cover no-repeat, linear-gradient(135deg, #0d0d1a 0%, #1a1030 40%, #0d0d1a 100%)"></div>`;
+  return '<div class="dupe-bg"></div>';
+};
 
 // ─── Helpers ──────────────────────────────────────────────────
 
@@ -29,7 +37,8 @@ function draw(): void {
   if (!el) return;
 
   el.innerHTML = `
-    <div class="dupe-page">
+    <div class="dupe-page${showBg ? ' dupe-page--withbg' : ''}">
+      ${dupeBgDiv()}
       <div class="dupe-header">
         <h1 class="page-title">Dupe</h1>
         <p class="page-subtitle">STW lobby dupe — You must be in your Homebase (FORTOUTPOST) and bugged</p>
@@ -40,8 +49,8 @@ function draw(): void {
           <div class="dupe-info">
             <h3>How it works</h3>
             <ol class="dupe-steps">
-              <li>Enter a Save the World homebase mission (FORTOUTPOST)</li>
-              <li>Get the bugged state (storage glitch)</li>
+              <li>Enter a Save the World homebase mission (FORTOUTPOST = storm shield)</li>
+              <li>Get the bugged state (storm shield glitch)</li>
               <li>Click <strong>Execute Dupe</strong> below</li>
               <li>If the profile is locked, the app will wait and retry automatically</li>
             </ol>
@@ -71,11 +80,6 @@ function draw(): void {
               </svg>
               <span>${esc(dupeResult.message)}</span>
             </div>
-            ${dupeResult.storageStatus ? `
-              <div class="dupe-storage">
-                ${dupeResult.storageStatus === 'bugged-with-storage' ? 'Storage: Accessible' : 'Storage: Not accessible'}
-              </div>
-            ` : ''}
             <button class="dupe-btn dupe-btn--primary" id="dupe-execute">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
               Try Again
@@ -166,11 +170,15 @@ async function executeDupe(): Promise<void> {
 export const dupePage: PageDefinition = {
   id: 'dupe',
   label: 'Dupe',
-  icon: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>`,
+  icon: `<img src="assets/icons/fnui/BR-STW/dupe.png" alt="Dupe" width="18" height="18" style="object-fit:contain;vertical-align:middle" />`,
   order: 19,
   render(container) {
     el = container;
-    draw();
+    window.glowAPI.storage.get<{ pageBackgrounds?: boolean; customBackgrounds?: Record<string, string> }>('settings').then(s => {
+      showBg = s?.pageBackgrounds ?? false;
+      customBgPath = s?.customBackgrounds?.dupe || '';
+      draw();
+    }).catch(() => draw());
   },
   cleanup() {
     window.glowAPI.dupe.offStatus();
