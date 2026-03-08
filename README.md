@@ -6,6 +6,7 @@
 Built for Save the World, Battle Royale, and Epic account automation.
 
 `v2.0.0` · `Electron 28` · `TypeScript` · `esbuild`
+<img width="804" height="310" alt="image" src="https://github.com/user-attachments/assets/43a76b00-ed3c-41ed-a0c6-54c6a8ecea0a" />
 
 </div>
 
