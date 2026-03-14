@@ -45,7 +45,7 @@ export type ExpeditionRewardType = typeof EXPEDITION_TYPES[number];
 const CYCLE_INTERVAL = 60 * 60 * 1000; // 1 hour
 const INITIAL_DELAY = 30 * 1000;         // 30 seconds after startup
 
-let intervalHandle: ReturnType<typeof setInterval> | null = null;
+let intervalHandle: ReturnType<typeof setTimeout> | null = null;
 let storageRef: Storage | null = null;
 
 // ── Helpers ──────────────────────────────────────────────────
@@ -283,14 +283,10 @@ async function runAllCycles(storage: Storage): Promise<void> {
 
   if (activeAccounts.length === 0) return;
 
-  console.log(`[AutoExpeditions] Running cycle for ${activeAccounts.length} active account(s)`);
-
   for (const [accountId] of activeAccounts) {
     try {
       await runExpeditionCycle(storage, accountId);
-    } catch (err: any) {
-      console.error(`[AutoExpeditions] Error in cycle for ${accountId}: ${err.message}`);
-    }
+    } catch { /* ignore per-account errors */ }
     // Small delay between accounts to avoid hitting rate limits
     await new Promise((r) => setTimeout(r, 3000));
   }
@@ -302,21 +298,22 @@ async function runAllCycles(storage: Storage): Promise<void> {
 export function startAutoExpeditionsInterval(storage: Storage): void {
   storageRef = storage;
 
+  const scheduleNext = async (): Promise<void> => {
+    const storedSettings = storageRef ? await storageRef.get<any>('settings') : null;
+    const delay = storedSettings?.automationTimings?.expeditionsIntervalMs ?? CYCLE_INTERVAL;
+    intervalHandle = setTimeout(() => {
+      runAllCycles(storage)
+        .catch(() => {})
+        .finally(() => scheduleNext());
+    }, delay);
+  };
+
   // Initial run after startup delay
   setTimeout(() => {
-    runAllCycles(storage).catch((err) =>
-      console.error(`[AutoExpeditions] Initial cycle error: ${err.message}`),
-    );
+    runAllCycles(storage)
+      .catch(() => {})
+      .finally(() => scheduleNext());
   }, INITIAL_DELAY);
-
-  // Recurring interval
-  intervalHandle = setInterval(() => {
-    runAllCycles(storage).catch((err) =>
-      console.error(`[AutoExpeditions] Interval cycle error: ${err.message}`),
-    );
-  }, CYCLE_INTERVAL);
-
-  console.log('[AutoExpeditions] Interval started (1h cycle, 30s initial delay)');
 }
 
 /**
@@ -324,7 +321,7 @@ export function startAutoExpeditionsInterval(storage: Storage): void {
  */
 export function stopAutoExpeditionsInterval(): void {
   if (intervalHandle) {
-    clearInterval(intervalHandle);
+    clearTimeout(intervalHandle);
     intervalHandle = null;
   }
 }

@@ -165,8 +165,6 @@ function scheduleNextRun(storage: Storage): void {
   const hours = Math.floor(ms / 3_600_000);
   const mins = Math.floor((ms % 3_600_000) / 60_000);
 
-  console.log(`[AutoDaily] Next run in ${hours}h ${mins}m`);
-
   dailyTimer = setTimeout(async () => {
     await processAllAutoDailies(storage);
     // Schedule the next one (tomorrow)
@@ -179,7 +177,6 @@ function scheduleNextRun(storage: Storage): void {
 export function startAutoDailyScheduler(storage: Storage): void {
   storageRef = storage;
   scheduleNextRun(storage);
-  console.log('[AutoDaily] Scheduler initialized — runs daily at 00:00:10 UTC');
 }
 
 export async function toggleAutoDaily(storage: Storage, accountId: string, active: boolean): Promise<AutoDailyData> {

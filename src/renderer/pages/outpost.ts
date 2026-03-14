@@ -183,8 +183,14 @@ function renderZone(z: ZoneInfo): string {
   const playerRows = z.editPermissions.length > 0
     ? z.editPermissions.map((p) => `
         <div class="op-player">
-          <span class="op-player-name">${esc(p.displayName)}</span>
-          <span class="op-player-id">${p.accountId}</span>
+          <div class="op-player-info">
+            <span class="op-player-name">${esc(p.displayName)}</span>
+            <span class="op-player-id">${p.accountId}</span>
+          </div>
+          <div class="op-player-actions">
+            <button class="op-copy-btn" data-copy="${esc(p.displayName)}" title="Copy display name">Name</button>
+            <button class="op-copy-btn" data-copy="${p.accountId}" title="Copy account ID">ID</button>
+          </div>
         </div>`).join('')
     : '<span class="op-empty">No edit permissions</span>';
 
@@ -360,6 +366,20 @@ function handleClick(e: Event): void {
   const retryBtn = target.closest('#op-retry') as HTMLElement | null;
   if (retryBtn) {
     fetchData();
+    return;
+  }
+
+  const copyBtn = target.closest('.op-copy-btn') as HTMLElement | null;
+  if (copyBtn) {
+    const text = copyBtn.dataset.copy;
+    if (text) {
+      navigator.clipboard.writeText(text).then(() => {
+        const prev = copyBtn.textContent;
+        copyBtn.textContent = '✓';
+        copyBtn.classList.add('op-copy-btn--ok');
+        setTimeout(() => { copyBtn.textContent = prev; copyBtn.classList.remove('op-copy-btn--ok'); }, 1200);
+      }).catch(() => {});
+    }
     return;
   }
 }

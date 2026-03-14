@@ -83,7 +83,6 @@ function msUntilNextMidnightUTC(): number {
 // ── Download ────────────────────────────────────────────────
 
 async function downloadShop(language: string = 'en'): Promise<CachedShop> {
-  console.log(`[ShopManager] Downloading shop (lang=${language})...`);
   const res = await axios.get(`https://fortnite-api.com/v2/shop?language=${language}`, {
     timeout: 20_000,
   });
@@ -185,7 +184,6 @@ async function downloadShop(language: string = 'en'): Promise<CachedShop> {
     expiresAt: nextMidnightUTC(),
   };
 
-  console.log(`[ShopManager] Downloaded ${totalItems} items in ${sections.length} sections (hash: ${hash})`);
   return result;
 }
 
@@ -198,18 +196,14 @@ export function initShopRefreshTimer(storage: Storage): void {
 function scheduleRefresh(storage: Storage): void {
   if (refreshTimer) clearTimeout(refreshTimer);
   const ms = msUntilNextMidnightUTC();
-  console.log(`[ShopManager] Next auto-refresh in ${Math.round(ms / 60_000)} min`);
   refreshTimer = setTimeout(async () => {
-    console.log('[ShopManager] Auto-refresh triggered (daily rotation)');
     try {
       cache = await downloadShop('en');
       // Notify renderer
       for (const win of BrowserWindow.getAllWindows()) {
         win.webContents.send('shop:rotated');
       }
-    } catch (err: any) {
-      console.error('[ShopManager] Auto-refresh failed:', err?.message);
-    }
+    } catch { /* ignore */ }
     scheduleRefresh(storage); // schedule next one
   }, ms);
 }
@@ -231,7 +225,6 @@ export async function getShopData(): Promise<{
     cache = await downloadShop('en');
     return { success: true, sections: cache.sections, totalItems: cache.totalItems, hash: cache.hash };
   } catch (err: any) {
-    console.error('[ShopManager] getShopData failed:', err?.message);
     // Return stale cache if available
     if (cache) {
       return { success: true, sections: cache.sections, totalItems: cache.totalItems, hash: cache.hash };
@@ -263,11 +256,9 @@ export async function purchaseItem(
       return res.data;
     });
 
-    console.log(`[ShopManager] Purchase successful: ${offerId}`);
     return { success: true };
   } catch (err: any) {
     const msg = err?.response?.data?.errorMessage || err?.response?.data?.message || err?.message || 'Purchase failed';
-    console.error('[ShopManager] Purchase failed:', msg);
     return { success: false, error: msg };
   }
 }
@@ -306,11 +297,9 @@ export async function giftItem(
       return res.data;
     });
 
-    console.log(`[ShopManager] Gift successful: ${offerId} → ${receiverAccountId}`);
     return { success: true };
   } catch (err: any) {
     const msg = err?.response?.data?.errorMessage || err?.response?.data?.message || err?.message || 'Gift failed';
-    console.error('[ShopManager] Gift failed:', msg);
     return { success: false, error: msg };
   }
 }
@@ -337,11 +326,9 @@ export async function toggleGifts(
       return res.data;
     });
 
-    console.log(`[ShopManager] Gifts ${enable ? 'enabled' : 'disabled'}`);
     return { success: true };
   } catch (err: any) {
     const msg = err?.response?.data?.errorMessage || err?.response?.data?.message || err?.message || 'Failed';
-    console.error('[ShopManager] Toggle gifts failed:', msg);
     return { success: false, error: msg };
   }
 }
@@ -406,11 +393,9 @@ export async function getFriendsList(
     }
 
     friends.sort((a, b) => a.displayName.localeCompare(b.displayName));
-    console.log(`[ShopManager] Friends loaded: ${friends.length}`);
     return { success: true, friends };
   } catch (err: any) {
     const msg = err?.response?.data?.errorMessage || err?.message || 'Failed';
-    console.error('[ShopManager] getFriendsList failed:', msg);
     return { success: false, friends: [], error: msg };
   }
 }
@@ -444,11 +429,9 @@ export async function getVbucks(
       }
     }
 
-    console.log(`[ShopManager] V-Bucks: ${total}`);
     return { success: true, total };
   } catch (err: any) {
     const msg = err?.response?.data?.errorMessage || err?.message || 'Failed';
-    console.error('[ShopManager] getVbucks failed:', msg);
     return { success: false, total: 0, error: msg };
   }
 }
@@ -479,11 +462,9 @@ export async function getOwnedCosmeticIds(
       .filter((tid): tid is string => !!tid && tid.includes(':'))
       .map((tid) => tid.substring(tid.indexOf(':') + 1).toLowerCase());
 
-    console.log(`[ShopManager] Owned cosmetics: ${ownedIds.length}`);
     return { success: true, ownedIds };
   } catch (err: any) {
     const msg = err?.response?.data?.errorMessage || err?.message || 'Failed';
-    console.error('[ShopManager] getOwnedCosmeticIds failed:', msg);
     return { success: false, ownedIds: [], error: msg };
   }
 }

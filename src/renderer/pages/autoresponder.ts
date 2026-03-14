@@ -541,8 +541,8 @@ function bindEvents(): void {
   el.querySelector('#ar-browse-file')?.addEventListener('click', async () => {
     const filePath = await window.glowAPI.autoresponder.browseFile();
     if (filePath && editingRule) {
-      editingRule.responseFile = filePath;
-      preserveEditorState();
+      preserveEditorState();            // save other fields from DOM first
+      editingRule.responseFile = filePath; // then set the new file (wins over what preserveEditorState read)
       draw();
     }
   });

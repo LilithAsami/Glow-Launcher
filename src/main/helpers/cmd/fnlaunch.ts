@@ -384,6 +384,7 @@ export async function saveLaunchSettings(storage: Storage, settings: FnLaunchSet
 // ── Process Killer Engine ─────────────────────────────────────
 
 let killIntervalId: ReturnType<typeof setInterval> | null = null;
+let killStartupIntervalId: ReturnType<typeof setInterval> | null = null;
 let killTimeoutId: ReturnType<typeof setTimeout> | null = null;
 
 function killProcess(name: string): void {
@@ -410,16 +411,22 @@ export async function startProcessKiller(storage: Storage): Promise<void> {
     for (const p of list) killProcess(p.name);
   };
 
-  // Startup mode: check every 15s for 3 minutes
+  // Startup mode: kill every 15s for 3 minutes
   if (startupProcesses.length > 0) {
+    doKill(startupProcesses); // immediate first kill
     let elapsed = 0;
     const id = setInterval(() => {
       elapsed += 15000;
       doKill(startupProcesses);
-      if (elapsed >= 180000) clearInterval(id);
+      if (elapsed >= 180000) {
+        clearInterval(id);
+        killStartupIntervalId = null;
+      }
     }, 15000);
-    doKill(startupProcesses); // immediate first kill
-    killTimeoutId = setTimeout(() => clearInterval(id), 180000);
+    killStartupIntervalId = id;
+    killTimeoutId = setTimeout(() => {
+      if (killStartupIntervalId) { clearInterval(killStartupIntervalId); killStartupIntervalId = null; }
+    }, 180000);
   }
 
   // Always mode: check every 30s while game is running
@@ -437,5 +444,6 @@ export async function startProcessKiller(storage: Storage): Promise<void> {
 
 export function stopProcessKiller(): void {
   if (killIntervalId) { clearInterval(killIntervalId); killIntervalId = null; }
+  if (killStartupIntervalId) { clearInterval(killStartupIntervalId); killStartupIntervalId = null; }
   if (killTimeoutId) { clearTimeout(killTimeoutId); killTimeoutId = null; }
 }

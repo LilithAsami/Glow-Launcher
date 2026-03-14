@@ -24,6 +24,7 @@ import axios from 'axios';
 import { refreshAccountToken, authenticatedRequest, validateAllTokens } from './helpers/auth/tokenRefresh';
 import { Endpoints } from './helpers/endpoints';
 import { launchGame } from './helpers/cmd/launcher';
+import { detectFortnitePath } from './helpers/cmd/detectFortnite';
 import * as devbuilds from './helpers/cmd/devbuilds';
 import * as devstairs from './helpers/cmd/devstairs';
 import * as airstrike from './helpers/cmd/airstrike';
@@ -37,6 +38,7 @@ import * as library from './helpers/cmd/library';
 import * as store from './helpers/cmd/store';
 import * as epicstatus from './helpers/epic/epicstatus';
 import * as redeemcodes from './helpers/cmd/redeemcodes';
+import * as lookup from './helpers/epic/lookup';
 import * as xpboosts from './helpers/cmd/xpboosts';
 import * as quests from './helpers/stw/quests';
 import * as autodaily from './events/autodaily/autodaily';
@@ -49,6 +51,7 @@ import expeditionManager from './managers/expeditions';
 import { getCampaignData } from './managers/expeditions/helpers';
 import guia from './utils/map/guia.json';
 import { notificationManager } from './managers/notifications/NotificationManager';
+import * as updater from './utils/updater';
 import type { AutoKickAccountConfig, AccountsData } from '../shared/types';
 
 /**
@@ -138,8 +141,16 @@ export function registerIpcHandlers(
     auth.cancelAuth();
   });
 
-  ipcMain.handle('accounts:import-launchers', () => {
-    return importFromOtherLaunchers(storage);
+  ipcMain.handle('accounts:import-launchers', async () => {
+    const result = await importFromOtherLaunchers(storage);
+    const added = result.results.filter((r) => r.status === 'added').length;
+    if (added > 0) {
+      // Defer so the IPC response reaches the renderer first, then notify
+      setImmediate(() => {
+        BrowserWindow.getAllWindows()[0]?.webContents.send('accounts:data-changed');
+      });
+    }
+    return result;
   });
 
   ipcMain.handle('accounts:remove', (_e, id: string) => {
@@ -223,20 +234,16 @@ export function registerIpcHandlers(
 
   ipcMain.handle('accounts:get-avatar', async (_e, accountId: string) => {
     const DEFAULT_AVATAR = 'https://fortnite-api.com/images/cosmetics/br/cid_890_athena_commando_f_choneheadhunter/variants/material/mat2.png';
-    console.log(`[Avatar] Fetching avatar for account: ${accountId}`);
 
     try {
       // 1. Get token
       const token = await refreshAccountToken(storage, accountId);
-      console.log(`[Avatar] Token obtained: ${token ? 'YES (' + token.substring(0, 20) + '...)' : 'NULL'}`);
       if (!token) {
-        console.log('[Avatar] No token, returning default');
         return { success: true, url: DEFAULT_AVATAR };
       }
 
       // 2. Fetch avatar from Epic API
       const avatarUrl = `${Endpoints.ACCOUNT_AVATAR}/fortnite/ids?accountIds=${accountId}`;
-      console.log(`[Avatar] Requesting: ${avatarUrl}`);
 
       let avatarId: string | null = null;
 
@@ -246,18 +253,11 @@ export function registerIpcHandlers(
           timeout: 8000,
         });
 
-        console.log(`[Avatar] Response status: ${response.status}`);
-        console.log(`[Avatar] Response data:`, JSON.stringify(response.data));
-
         if (Array.isArray(response.data) && response.data[0]?.avatarId) {
           avatarId = response.data[0].avatarId;
-          console.log(`[Avatar] Got avatarId: ${avatarId}`);
-        } else {
-          console.log('[Avatar] No avatarId in response');
         }
       } catch (err: any) {
         if (err?.response?.status === 401) {
-          console.log('[Avatar] Got 401, refreshing token and retrying...');
           const newToken = await refreshAccountToken(storage, accountId);
           if (newToken) {
             try {
@@ -265,20 +265,11 @@ export function registerIpcHandlers(
                 headers: { Authorization: `bearer ${newToken}` },
                 timeout: 8000,
               });
-              console.log(`[Avatar] Retry response status: ${retryRes.status}`);
-              console.log(`[Avatar] Retry response data:`, JSON.stringify(retryRes.data));
               if (Array.isArray(retryRes.data) && retryRes.data[0]?.avatarId) {
                 avatarId = retryRes.data[0].avatarId;
-                console.log(`[Avatar] Retry got avatarId: ${avatarId}`);
               }
-            } catch (retryErr: any) {
-              console.error('[Avatar] Retry also failed:', retryErr?.response?.status, retryErr?.message);
-            }
-          } else {
-            console.error('[Avatar] Token refresh returned null');
+            } catch { /* ignore */ }
           }
-        } else {
-          console.error('[Avatar] Request error:', err?.response?.status, err?.code, err?.message);
         }
       }
 
@@ -287,16 +278,13 @@ export function registerIpcHandlers(
       if (avatarId && avatarId.includes(':')) {
         const idPart = avatarId.split(':')[1];
         iconURL = `https://fortnite-api.com/images/cosmetics/br/${idPart}/smallicon.png`;
-        console.log(`[Avatar] Built avatar URL: ${iconURL}`);
       } else {
         iconURL = DEFAULT_AVATAR;
-        console.log('[Avatar] Using default avatar');
       }
 
       avatarCache.set(accountId, iconURL);
       return { success: true, url: iconURL };
-    } catch (err: any) {
-      console.error('[Avatar] Unexpected error:', err?.message, err?.stack);
+    } catch {
       return { success: true, url: DEFAULT_AVATAR };
     }
   });
@@ -370,6 +358,20 @@ export function registerIpcHandlers(
     return security.getExchangeCodeUrl(storage);
   });
 
+  // ── Settings helpers ────────────────────────────────────────
+  ipcMain.handle('settings:detect-fortnite-path', async (_e) => {
+    try {
+      const detected = detectFortnitePath();
+      if (detected) {
+        const s = (await storage.get<{ fortnitePath?: string }>('settings')) ?? {};
+        await storage.set('settings', { ...s, fortnitePath: detected });
+      }
+      return { success: true, path: detected };
+    } catch (err: any) {
+      return { success: false, path: null, error: err.message };
+    }
+  });
+
   // ── Dialog ─────────────────────────────────────────────────
   ipcMain.handle('dialog:open-directory', async (e) => {
     const win = BrowserWindow.fromWebContents(e.sender);
@@ -399,6 +401,10 @@ export function registerIpcHandlers(
 
   ipcMain.handle('alerts:get-missions-force', () => {
     return alerts.getMissions(storage, true);
+  });
+
+  ipcMain.handle('alerts:get-completed', () => {
+    return alerts.getCompletedAlerts(storage);
   });
 
   // ── Files ──────────────────────────────────────────────────
@@ -540,6 +546,18 @@ export function registerIpcHandlers(
     return xpboosts.consumeXPBoosts(storage, type, amount, targetAccountId);
   });
 
+  ipcMain.handle('xpboosts:bulk-personal', async () => {
+    const result = await xpboosts.bulkPersonalXPBoosts(storage);
+    if (result.totalConsumed > 0) {
+      notificationManager.push(
+        'general',
+        'XP Boosts',
+        `Bulk activated ${result.totalConsumed} personal boost${result.totalConsumed !== 1 ? 's' : ''} across ${result.accountsProcessed} account${result.accountsProcessed !== 1 ? 's' : ''}`,
+      );
+    }
+    return result;
+  });
+
   // ── MCP ────────────────────────────────────────────────────
   ipcMain.handle('mcp:execute', async (_e, operation: string, profileId: string) => {
     return mcp.executeMcp(storage, operation, profileId);
@@ -570,6 +588,25 @@ export function registerIpcHandlers(
       return { success: true, ...result };
     } catch (err: any) {
       return { success: false, error: err.message || 'Matchmaking lookup failed' };
+    }
+  });
+
+  // ── Lookup ─────────────────────────────────────────────────
+  ipcMain.handle('lookup:search', async (_e, searchTerm: string) => {
+    try {
+      const results = await stalk.searchPlayers(storage, searchTerm);
+      return { success: true, results };
+    } catch (err: any) {
+      return { success: false, results: [], error: err.message || 'Search failed' };
+    }
+  });
+
+  ipcMain.handle('lookup:batch', async (_e, accountIds: string[]) => {
+    try {
+      const result = await lookup.lookupAccountIds(storage, accountIds);
+      return result;
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Lookup failed' };
     }
   });
 
@@ -724,6 +761,10 @@ export function registerIpcHandlers(
 
   ipcMain.handle('friends:remove-all', async () => {
     return friends.removeAllFriends(storage);
+  });
+
+  ipcMain.handle('friends:clear-all', async () => {
+    return friends.clearAllFriends(storage);
   });
 
   ipcMain.handle('friends:accept-all', async () => {
@@ -1624,5 +1665,63 @@ export function registerIpcHandlers(
   // ── Store ───────────────────────────────────────────────
   ipcMain.handle('store:get-free-games', () => {
     return store.getFreeGames();
+  });
+
+  // ── Themes ──────────────────────────────────────────────
+  ipcMain.handle('theme:fetch-url', async (_e, url: string) => {
+    try {
+      const parsed = new URL(url);
+      if (!['http:', 'https:'].includes(parsed.protocol)) {
+        return { success: false, error: 'Only HTTP/HTTPS URLs are allowed' };
+      }
+      const resp = await axios.get(parsed.href, {
+        timeout: 15000,
+        maxContentLength: 2 * 1024 * 1024,
+        responseType: 'text',
+        headers: { 'Accept': 'text/css, application/json, text/plain, */*' },
+      });
+      return { success: true, data: String(resp.data) };
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Failed to fetch URL' };
+    }
+  });
+
+  ipcMain.handle('dialog:save-file', async (e, options?: { title?: string; defaultPath?: string; filters?: { name: string; extensions: string[] }[] }) => {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    const result = await dialog.showSaveDialog(win!, {
+      title: options?.title || 'Save file',
+      defaultPath: options?.defaultPath,
+      filters: options?.filters || [{ name: 'All Files', extensions: ['*'] }],
+    });
+    if (result.canceled || !result.filePath) return null;
+    return result.filePath;
+  });
+
+  ipcMain.handle('theme:write-file', async (_e, filePath: string, content: string) => {
+    await fs.promises.writeFile(filePath, content, 'utf8');
+    return { success: true };
+  });
+
+  ipcMain.handle('theme:read-file', async (_e, filePath: string) => {
+    const content = await fs.promises.readFile(filePath, 'utf8');
+    return content;
+  });
+
+  // ── Updater ──────────────────────────────────────────────────
+
+  ipcMain.handle('updater:check', async () => {
+    return updater.checkForUpdate();
+  });
+
+  ipcMain.handle('updater:download-install', async (_e, url: string, filename: string) => {
+    return updater.downloadAndInstall(url, filename, _e.sender);
+  });
+
+  ipcMain.handle('updater:open-releases', async () => {
+    updater.openReleasePage();
+  });
+
+  ipcMain.handle('updater:open-repo', async () => {
+    updater.openRepoPage();
   });
 }

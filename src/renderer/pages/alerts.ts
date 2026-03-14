@@ -4,6 +4,7 @@ import type {
   ProcessedMission,
   AlertRewardItem,
 } from '../../shared/types';
+import { copyMissionToClipboard } from '../utils/missionScreenshot';
 
 let el: HTMLElement | null = null;
 let zones: ZoneMissions[] = [];
@@ -13,6 +14,7 @@ let expandedZones: Set<string> = new Set();
 let expandedMissions: Set<string> = new Set();
 let showBg = false;
 let customBgPath = '';
+let doneAlertIds: Set<string> = new Set();
 
 const alertsBgDiv = () => {
   if (!showBg) return '';
@@ -31,10 +33,24 @@ async function loadAlerts(): Promise<void> {
     zones = await window.glowAPI.alerts.getMissions();
   } catch (err: any) {
     error = err?.message || 'Failed to load mission alerts';
+    loading = false;
+    draw();
+    return;
   }
 
   loading = false;
   draw();
+
+  // Fetch completed alerts in background (non-blocking)
+  try {
+    const completed = await window.glowAPI.alerts.getCompleted();
+    if (completed?.success && completed.claimData) {
+      doneAlertIds = new Set((completed.claimData as Array<{ missionAlertId: string }>).map((c) => c.missionAlertId));
+      draw();
+    }
+  } catch {
+    // ignore — done indicators are optional
+  }
 }
 
 // ─── Drawing ─────────────────────────────────────────────────
@@ -141,6 +157,11 @@ function renderZone(zoneData: ZoneMissions): string {
 
 // ─── Zone Badge Helper ───────────────────────────────────────
 
+function isMissionDone(m: ProcessedMission): boolean {
+  if (doneAlertIds.size === 0) return false;
+  return m.alertGuids.some((guid) => doneAlertIds.has(guid));
+}
+
 function getZoneBadge(zone: string): string {
   const ZONE_BADGE_MAP: Record<string, { letter: string; cls: string }> = {
     'Twine Peaks': { letter: 'T', cls: 'alert-zone-badge-t' },
@@ -182,9 +203,10 @@ function renderMission(m: ProcessedMission): string {
   const zoneBadge = getZoneBadge(m.zone);
 
   return `
-    <div class="alert-mission ${m.hasAlerts ? 'alert-mission-has' : 'alert-mission-no'}" data-mission-id="${m.id}">
+    <div class="alert-mission ${m.hasAlerts ? 'alert-mission-has' : 'alert-mission-no'}${isMissionDone(m) ? ' alert-mission-done' : ''}" data-mission-id="${m.id}">
       <div class="alert-mission-header" data-mission-toggle="${m.id}">
         <div class="alert-mission-left">
+          ${isMissionDone(m) ? '<span class="mission-done-dot" title="Already completed today"></span>' : ''}
           ${zoneBadge}
           <img src="${m.missionIcon}" alt="" class="alert-mission-icon" onerror="this.style.display='none'">
           <div class="alert-mission-meta">
@@ -201,6 +223,9 @@ function renderMission(m: ProcessedMission): string {
         <div class="alert-mission-right">
           <div class="alert-mod-thumbs">${modIconsHTML}</div>
           ${renderRewardPills([...m.alerts, ...m.rewards])}
+          <button class="mission-copy-btn" data-mission-copy="${m.id}" title="Copy to clipboard">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          </button>
           <svg class="alert-mission-arrow ${isExpanded ? 'alert-mission-arrow-open' : ''}" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
         </div>
       </div>
@@ -212,17 +237,25 @@ function renderMission(m: ProcessedMission): string {
 }
 
 function renderRewardPills(items: AlertRewardItem[]): string {
-  // Only show items that have an icon
   const withIcons = items.filter((r) => r.icon);
   if (withIcons.length === 0) return '';
+  // Aggregate duplicates by icon path, summing quantities
+  const grouped = new Map<string, { r: AlertRewardItem; total: number }>();
+  for (const r of withIcons) {
+    const key = r.icon!;
+    const ex = grouped.get(key);
+    if (ex) ex.total += r.quantity;
+    else grouped.set(key, { r, total: r.quantity });
+  }
+  const merged = [...grouped.values()];
   const maxPills = 6;
-  return `<div class="alert-reward-pills">${withIcons
+  return `<div class="alert-reward-pills">${merged
     .slice(0, maxPills)
-    .map((r) => {
-      const qty = r.quantity > 1 ? `<span class="alert-pill-qty">x${r.quantity}</span>` : '';
-      return `<span class="alert-pill" title="${r.name}${r.quantity > 1 ? ' x' + r.quantity : ''}"><img src="${r.icon}" alt="" class="alert-pill-icon" onerror="this.style.display='none'">${qty}</span>`;
+    .map(({ r, total }) => {
+      const qty = total > 1 ? `<span class="alert-pill-qty">x${total}</span>` : '';
+      return `<span class="alert-pill" title="${r.name}${total > 1 ? ' x' + total : ''}"><img src="${r.icon}" alt="" class="alert-pill-icon" onerror="this.style.display='none'">${qty}</span>`;
     })
-    .join('')}${withIcons.length > maxPills ? `<span class="alert-pill alert-pill-more">+${withIcons.length - maxPills}</span>` : ''}</div>`;
+    .join('')}${merged.length > maxPills ? `<span class="alert-pill alert-pill-more">+${merged.length - maxPills}</span>` : ''}</div>`;
 }
 
 function renderMissionDetails(m: ProcessedMission): string {
@@ -335,6 +368,25 @@ function bindEvents(): void {
         expandedMissions.add(mid);
         if (details) details.style.display = 'block';
         if (arrow) arrow.classList.add('alert-mission-arrow-open');
+      }
+    });
+  });
+
+  // Mission copy-to-clipboard buttons
+  el?.querySelectorAll<HTMLButtonElement>('[data-mission-copy]').forEach((btn) => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const mid = btn.dataset.missionCopy!;
+      const m = zones.flatMap((z) => z.missions).find((x) => x.id === mid);
+      if (!m) return;
+      const prev = btn.innerHTML;
+      btn.disabled = true;
+      try {
+        await copyMissionToClipboard(m);
+        btn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>';
+        setTimeout(() => { btn.innerHTML = prev; btn.disabled = false; }, 1600);
+      } catch {
+        btn.disabled = false;
       }
     });
   });

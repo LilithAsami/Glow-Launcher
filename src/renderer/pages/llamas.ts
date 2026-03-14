@@ -152,7 +152,7 @@ function drawLogSection(): void {
     .join('');
 }
 
-// ── Data loading ──────────────────────────────────────────────
+// ── Data loading ──────────────────────────────────────────────────────
 
 async function loadLlamas(): Promise<void> {
   const accountId = getSelectedAccountId();
@@ -183,7 +183,47 @@ async function loadLlamas(): Promise<void> {
   draw();
 }
 
+/** Silent refresh used after a claim — keeps existing cards visible, no loading flash. */
+async function refreshLlamasSilent(): Promise<void> {
+  const accountId = getSelectedAccountId();
+  if (!accountId) return;
+
+  // Save scroll position before redraw
+  const scrollArea = el?.querySelector('.llamas-scroll-area') as HTMLElement | null;
+  const savedScroll = scrollArea?.scrollLeft ?? 0;
+
+  try {
+    const res = await window.glowAPI.llamas.get(accountId);
+    if (res.success && res.llamas) {
+      llamas = res.llamas;
+    } else {
+      error = res.error || 'Failed to load llamas';
+    }
+  } catch (err: any) {
+    error = err.message || 'Unexpected error';
+  }
+
+  claimingSet.clear();
+  draw();
+
+  // Restore scroll position after DOM rebuild
+  const newScrollArea = el?.querySelector('.llamas-scroll-area') as HTMLElement | null;
+  if (newScrollArea) newScrollArea.scrollLeft = savedScroll;
+}
+
 // ── Claim actions ─────────────────────────────────────────────
+
+/** Directly update a single card's claiming state without a full re-render. */
+function updateCardClaiming(templateId: string): void {
+  if (!el) return;
+  const card = el.querySelector(`.llama-card[data-tpl="${templateId.replace(/"/g, '\\"')}"]`) as HTMLElement | null;
+  if (!card) return;
+  card.classList.add('llama-card--claiming');
+  card.querySelectorAll<HTMLButtonElement>('.llama-btn').forEach((btn) => {
+    btn.disabled = true;
+    btn.innerHTML = '<span class="llama-btn-spinner"></span>';
+  });
+}
 
 async function claimLlama(templateId: string, count: number): Promise<void> {
   const accountId = getSelectedAccountId();
@@ -193,7 +233,7 @@ async function claimLlama(templateId: string, count: number): Promise<void> {
   if (!entry) return;
 
   claimingSet.add(templateId);
-  draw();
+  updateCardClaiming(templateId);
 
   try {
     const claimCount = Math.min(count, entry.quantity);
@@ -207,7 +247,7 @@ async function claimLlama(templateId: string, count: number): Promise<void> {
   }
 
   claimingSet.delete(templateId);
-  await loadLlamas();
+  await refreshLlamasSilent();
 }
 
 async function claimAllLlama(templateId: string): Promise<void> {
@@ -218,7 +258,7 @@ async function claimAllLlama(templateId: string): Promise<void> {
   if (!entry) return;
 
   claimingSet.add(templateId);
-  draw();
+  updateCardClaiming(templateId);
 
   try {
     const res = await window.glowAPI.llamas.open(accountId, entry.templateId, entry.type, entry.quantity, entry.itemIds);
@@ -230,7 +270,7 @@ async function claimAllLlama(templateId: string): Promise<void> {
   }
 
   claimingSet.delete(templateId);
-  await loadLlamas();
+  await refreshLlamasSilent();
 }
 
 // ── Render ────────────────────────────────────────────────────
@@ -290,7 +330,7 @@ function draw(): void {
     const claimCount = Math.min(l.quantity, 10);
 
     return `
-      <div class="llama-card ${isClaiming ? 'llama-card--claiming' : ''}">
+      <div class="llama-card ${isClaiming ? 'llama-card--claiming' : ''}" data-tpl="${esc(l.templateId)}">
         <div class="llama-card-inner">
           <div class="llama-card-bg-glow"></div>
           <div class="llama-card-image-wrap">

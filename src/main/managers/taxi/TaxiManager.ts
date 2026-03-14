@@ -426,26 +426,20 @@ class TaxiManager {
     // Check cache
     const cached = this.avatarCache.get(accountId);
     if (cached && Date.now() - cached.ts < this.AVATAR_CACHE_TTL) {
-      console.log(`[TaxiAvatar] Cache hit for ${accountId}: ${cached.url}`);
       return cached.url;
     }
 
     if (!this.storageRef) {
-      console.log('[TaxiAvatar] No storageRef, returning default');
       return this.DEFAULT_AVATAR;
     }
-
-    console.log(`[TaxiAvatar] Fetching avatar for: ${accountId}`);
 
     try {
       // 1. Get token
       const token = await refreshAccountToken(this.storageRef, accountId);
-      console.log(`[TaxiAvatar] Token: ${token ? 'YES (' + token.substring(0, 20) + '...)' : 'NULL'}`);
       if (!token) return this.DEFAULT_AVATAR;
 
       // 2. Fetch from Epic API
       const avatarApiUrl = `${Endpoints.ACCOUNT_AVATAR}/fortnite/ids?accountIds=${accountId}`;
-      console.log(`[TaxiAvatar] Requesting: ${avatarApiUrl}`);
 
       let avatarId: string | null = null;
 
@@ -455,18 +449,11 @@ class TaxiManager {
           timeout: 8000,
         });
 
-        console.log(`[TaxiAvatar] Response status: ${response.status}`);
-        console.log(`[TaxiAvatar] Response data:`, JSON.stringify(response.data));
-
         if (Array.isArray(response.data) && response.data[0]?.avatarId) {
           avatarId = response.data[0].avatarId;
-          console.log(`[TaxiAvatar] Got avatarId: ${avatarId}`);
-        } else {
-          console.log('[TaxiAvatar] No avatarId in response');
         }
       } catch (err: any) {
         if (err?.response?.status === 401) {
-          console.log('[TaxiAvatar] Got 401, refreshing token...');
           const newToken = await refreshAccountToken(this.storageRef, accountId);
           if (newToken) {
             try {
@@ -474,8 +461,6 @@ class TaxiManager {
                 headers: { Authorization: `bearer ${newToken}` },
                 timeout: 8000,
               });
-              console.log(`[TaxiAvatar] Retry status: ${retryRes.status}`);
-              console.log(`[TaxiAvatar] Retry data:`, JSON.stringify(retryRes.data));
               if (Array.isArray(retryRes.data) && retryRes.data[0]?.avatarId) {
                 avatarId = retryRes.data[0].avatarId;
               }
@@ -493,10 +478,8 @@ class TaxiManager {
       if (avatarId && avatarId.includes(':')) {
         const idPart = avatarId.split(':')[1];
         iconURL = `https://fortnite-api.com/images/cosmetics/br/${idPart}/smallicon.png`;
-        console.log(`[TaxiAvatar] Built URL: ${iconURL}`);
       } else {
         iconURL = this.DEFAULT_AVATAR;
-        console.log('[TaxiAvatar] Using default avatar');
       }
 
       this.avatarCache.set(accountId, { url: iconURL, ts: Date.now() });

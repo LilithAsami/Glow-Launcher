@@ -16,6 +16,8 @@ let targetAccountId = '';
 let targetDisplayName = '';
 let fetchError = '';
 let consumeResult: { success: boolean; consumed: number; failed: number; error?: string } | null = null;
+let bulkBoosting = false;
+let bulkResult: { success: boolean; totalConsumed: number; accountsProcessed: number; failed: number; error?: string } | null = null;
 
 // ── Player search state ───────────────────────────────────────
 let searchTerm = '';
@@ -156,6 +158,25 @@ function draw(): void {
               `<img src="assets/icons/stw/resources/${boostType === 'personal' ? 'smallxpboost' : 'smallxpboost_gift'}.png" alt="" width="18" height="18" /> Activate ${amount} ${boostType} boost${amount !== 1 ? 's' : ''}`}
           </button>
 
+          ${boostType === 'personal' ? `
+            <button class="xpboost-consume-btn xpboost-bulk-btn" id="xpboost-bulk"
+                    style="margin-top:8px;opacity:0.85" ${bulkBoosting || consuming ? 'disabled' : ''}>
+              ${bulkBoosting
+                ? `<div class="xpboost-spinner"></div> Activating all accounts...`
+                : `<img src="assets/icons/stw/resources/smallxpboost.png" alt="" width="18" height="18" /> Bulk — All Accounts`}
+            </button>
+          ` : ''}
+
+          ${bulkResult ? `
+            <div class="xpboost-msg ${bulkResult.success ? 'xpboost-msg--success' : 'xpboost-msg--error'}">
+              ${bulkResult.success
+                ? `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                   Activated ${bulkResult.totalConsumed} personal boost${bulkResult.totalConsumed !== 1 ? 's' : ''} across ${bulkResult.accountsProcessed} account${bulkResult.accountsProcessed !== 1 ? 's' : ''}${bulkResult.failed > 0 ? ` (${bulkResult.failed} error${bulkResult.failed !== 1 ? 's' : ''})` : ''}`
+                : `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+                   ${esc(bulkResult.error || 'Bulk activation failed')}`}
+            </div>
+          ` : ''}
+
           ${fetchError ? `
             <div class="xpboost-msg xpboost-msg--error">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
@@ -260,6 +281,7 @@ function bindEvents(): void {
   });
 
   el.querySelector('#xpboost-consume')?.addEventListener('click', consumeBoosts);
+  el.querySelector('#xpboost-bulk')?.addEventListener('click', doBulkBoosts);
 }
 
 // ─── Actions ──────────────────────────────────────────────────
@@ -371,6 +393,27 @@ async function consumeBoosts(): Promise<void> {
   }
 }
 
+async function doBulkBoosts(): Promise<void> {
+  if (bulkBoosting || consuming) return;
+  bulkBoosting = true;
+  bulkResult = null;
+  draw();
+
+  try {
+    const result = await window.glowAPI.xpBoosts.bulkPersonal();
+    bulkResult = result;
+    if (result.totalConsumed > 0) {
+      await fetchBoosts();
+      return; // fetchBoosts calls draw()
+    }
+  } catch (err: any) {
+    bulkResult = { success: false, totalConsumed: 0, accountsProcessed: 0, failed: 0, error: err.message || 'Unexpected error' };
+  } finally {
+    bulkBoosting = false;
+    draw();
+  }
+}
+
 // ─── Account change ───────────────────────────────────────────
 
 function onAccountChanged() {
@@ -379,6 +422,7 @@ function onAccountChanged() {
   personalItemId = null;
   teammateItemId = null;
   consumeResult = null;
+  bulkResult = null;
   fetchError = '';
   amount = 1;
   targetAccountId = '';

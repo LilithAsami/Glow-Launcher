@@ -313,10 +313,16 @@ export function getResourceIcon(itemType: string, translatedName: string): strin
   // CardPack
   if (tipo.includes('cardpack:')) {
     if (tipo.includes('reagent_alteration_upgrade')) {
-      const rarityMatch = tipo.match(/(sr|vr|r|uc|c)$/);
+      const rarityMatch = tipo.match(/reagent_alteration_upgrade_(sr|vr|r|uc|c)/);
       if (rarityMatch) {
         return `assets/icons/stw/resources/reagent_alteration_upgrade_${rarityMatch[1]}.png`;
       }
+    }
+    if (tipo.includes('reagent_alteration_generic')) {
+      return 'assets/icons/stw/resources/reagent_alteration_generic.png';
+    }
+    if (tipo.includes('zcp_eventscaling') || tipo.includes('eventcurrency_scaling') || tipo.includes('eventscaling')) {
+      return 'assets/icons/stw/resources/eventcurrency_scaling.png';
     }
     if (tipo.includes('reagent_c_t01')) return 'assets/icons/stw/resources/reagent_c_t01.png';
     if (tipo.includes('reagent_c_t02')) return 'assets/icons/stw/resources/reagent_c_t02.png';
@@ -446,6 +452,7 @@ export async function getMissions(storage: Storage, forceRefresh = false): Promi
 
   // Map mission alerts by key (theaterId_tileIndex)
   const alertsByMission: Record<string, any[]> = {};
+  const alertGuidsByMission: Record<string, string[]> = {};
   if (Array.isArray(worldInfo.missionAlerts)) {
     for (const group of worldInfo.missionAlerts) {
       if (!Array.isArray(group.availableMissionAlerts)) continue;
@@ -453,6 +460,11 @@ export async function getMissions(storage: Storage, forceRefresh = false): Promi
         const key = `${group.theaterId}${alert.tileIndex !== undefined ? `_${alert.tileIndex}` : ''}`;
         if (!alertsByMission[key]) alertsByMission[key] = [];
         alertsByMission[key].push(alert);
+        // Preserve missionAlertGuid for completed-alerts matching
+        if (alert.missionAlertGuid) {
+          if (!alertGuidsByMission[key]) alertGuidsByMission[key] = [];
+          alertGuidsByMission[key].push(alert.missionAlertGuid);
+        }
       }
     }
   }
@@ -558,6 +570,7 @@ export async function getMissions(storage: Storage, forceRefresh = false): Promi
             rewards,
             modifiers,
             hasAlerts: alerts.length > 0,
+            alertGuids: alertGuidsByMission[key] || [],
           });
         } catch {
           // Skip broken missions
@@ -609,4 +622,46 @@ export async function getMissions(storage: Storage, forceRefresh = false): Promi
   _cachedUTCDate = today;
 
   return result;
+}
+
+// ── Completed alerts (QueryPublicProfile) ──────────────────
+
+export async function getCompletedAlerts(storage: Storage): Promise<{
+  success: boolean;
+  claimData: Array<{ missionAlertId: string; redemptionDateUtc: string; evictClaimDataAfterUtc: string }>;
+  error?: string;
+}> {
+  try {
+    const raw = (await storage.get<AccountsData>('accounts')) ?? { tosAccepted: false, accounts: [] };
+    const main = raw.accounts.find((a) => a.isMain) ?? raw.accounts[0];
+    if (!main) return { success: false, claimData: [], error: 'No account found' };
+
+    const token = await refreshAccountToken(storage, main.accountId);
+    if (!token) return { success: false, claimData: [], error: 'Failed to refresh token' };
+
+    const { data } = await authenticatedRequest(
+      storage,
+      main.accountId,
+      token,
+      async (t) => {
+        const res = await axios.post(
+          `${Endpoints.MCP}/${main.accountId}/public/QueryPublicProfile?profileId=campaign&rvn=-1`,
+          {},
+          {
+            headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' },
+            timeout: 15000,
+          },
+        );
+        return res.data;
+      },
+    );
+
+    const attrs = data?.profileChanges?.[0]?.profile?.stats?.attributes;
+    const claimData: Array<{ missionAlertId: string; redemptionDateUtc: string; evictClaimDataAfterUtc: string }> =
+      attrs?.mission_alert_redemption_record?.claimData ?? [];
+
+    return { success: true, claimData };
+  } catch (err: any) {
+    return { success: false, claimData: [], error: err?.message || 'Unknown error' };
+  }
 }

@@ -15,6 +15,12 @@ let logs: AutoKickLogEntry[] = [];
 
 const MAX_LOGS = 80;
 
+// ─── Bulk copy state ─────────────────────────────────────────
+let akBulkOpen = false;
+let akBulkSourceId = '';
+let akBulkTargets: Set<string> = new Set();
+let akBulkApplying = false;
+
 // ─── Render orchestrator ─────────────────────────────────────
 
 function draw(): void {
@@ -77,8 +83,16 @@ function draw(): void {
 
   el.innerHTML = `
     <div class="page-autokick">
-      <h1 class="page-title">AutoKick</h1>
-      <p class="page-subtitle">Automatic STW mission monitor — per-account configuration</p>
+      <div class="page-header-row">
+        <div>
+          <h1 class="page-title">AutoKick</h1>
+          <p class="page-subtitle">Automatic STW mission monitor — per-account configuration</p>
+        </div>
+        <button class="bulk-copy-btn" id="ak-bulk-open" ${accounts.length < 2 ? 'disabled' : ''} title="Copy settings from one account to others">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          Copy to All
+        </button>
+      </div>
 
       <div class="ak-cards">${cardsHtml}</div>
 
@@ -86,9 +100,61 @@ function draw(): void {
         <h3 class="ak-log-title">Activity Log</h3>
         <div class="ak-log-list" id="ak-log-list">${logsHtml}</div>
       </div>
+      ${akBulkOpen ? renderAkBulkModal() : ''}
     </div>`;
 
   bindEvents();
+}
+
+function renderAkBulkModal(): string {
+  const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const srcOpts = accounts
+    .map((a) => `<option value="${a.accountId}" ${a.accountId === akBulkSourceId ? 'selected' : ''}>${esc(a.displayName)}</option>`)
+    .join('');
+  const targets = accounts
+    .map((a) => {
+      const isSrc = a.accountId === akBulkSourceId;
+      const checked = !isSrc && akBulkTargets.has(a.accountId);
+      return `
+        <label class="bulk-target-item${isSrc ? ' bulk-target-source' : ''}">
+          <input type="checkbox" class="bulk-target-check" data-target-id="${a.accountId}" ${checked ? 'checked' : ''} ${isSrc ? 'disabled' : ''}>
+          <span>${esc(a.displayName)}</span>
+          ${isSrc ? '<span class="bulk-source-label">(source)</span>' : ''}
+        </label>`;
+    })
+    .join('');
+  const count = akBulkTargets.size;
+  return `
+    <div class="bulk-modal-overlay" id="ak-bulk-overlay">
+      <div class="bulk-modal">
+        <div class="bulk-modal-header">
+          <h4>Copy Settings to Accounts</h4>
+          <button class="bulk-modal-close" id="ak-bulk-close">&times;</button>
+        </div>
+        <div class="bulk-modal-body">
+          <div class="bulk-field">
+            <label class="bulk-label">Copy settings from</label>
+            <select class="bulk-source-select" id="ak-bulk-source">${srcOpts}</select>
+          </div>
+          <div class="bulk-field">
+            <div class="bulk-targets-header">
+              <label class="bulk-label">Apply to</label>
+              <div class="bulk-targets-actions">
+                <button class="bulk-sel-all" id="ak-sel-all">All</button>
+                <button class="bulk-sel-none" id="ak-sel-none">None</button>
+              </div>
+            </div>
+            <div class="bulk-targets-list">${targets}</div>
+          </div>
+        </div>
+        <div class="bulk-modal-footer">
+          <button class="bulk-cancel" id="ak-bulk-cancel">Cancel</button>
+          <button class="bulk-apply" id="ak-bulk-apply" ${!akBulkSourceId || count === 0 || akBulkApplying ? 'disabled' : ''}>
+            ${akBulkApplying ? '⏳ Applying...' : `Apply to ${count} account${count !== 1 ? 's' : ''}`}
+          </button>
+        </div>
+      </div>
+    </div>`;
 }
 
 function renderConfigOptions(accountId: string, cfg: AutoKickAccountConfig): string {
@@ -143,6 +209,71 @@ function bindEvents(): void {
       akData = updatedData;
     });
   });
+
+  // ── Bulk copy ──────────────────────────────────────────────
+  el.querySelector('#ak-bulk-open')?.addEventListener('click', () => {
+    akBulkSourceId = accounts[0]?.accountId ?? '';
+    akBulkTargets = new Set(accounts.filter((a) => a.accountId !== akBulkSourceId).map((a) => a.accountId));
+    akBulkOpen = true;
+    draw();
+  });
+
+  if (akBulkOpen) {
+    const closeBulk = () => { akBulkOpen = false; draw(); };
+    el.querySelector('#ak-bulk-close')?.addEventListener('click', closeBulk);
+    el.querySelector('#ak-bulk-cancel')?.addEventListener('click', closeBulk);
+    el.querySelector('#ak-bulk-overlay')?.addEventListener('click', (e) => {
+      if ((e.target as HTMLElement).id === 'ak-bulk-overlay') closeBulk();
+    });
+    el.querySelector<HTMLSelectElement>('#ak-bulk-source')?.addEventListener('change', (e) => {
+      akBulkSourceId = (e.target as HTMLSelectElement).value;
+      akBulkTargets = new Set(accounts.filter((a) => a.accountId !== akBulkSourceId).map((a) => a.accountId));
+      draw();
+    });
+    el.querySelector('#ak-sel-all')?.addEventListener('click', () => {
+      akBulkTargets = new Set(accounts.filter((a) => a.accountId !== akBulkSourceId).map((a) => a.accountId));
+      draw();
+    });
+    el.querySelector('#ak-sel-none')?.addEventListener('click', () => {
+      akBulkTargets = new Set();
+      draw();
+    });
+    el.querySelectorAll<HTMLInputElement>('.bulk-target-check').forEach((cb) => {
+      cb.addEventListener('change', () => {
+        const id = cb.dataset.targetId!;
+        if (cb.checked) akBulkTargets.add(id);
+        else akBulkTargets.delete(id);
+        const applyBtn = el?.querySelector<HTMLButtonElement>('#ak-bulk-apply');
+        if (applyBtn) {
+          const c = akBulkTargets.size;
+          applyBtn.textContent = `Apply to ${c} account${c !== 1 ? 's' : ''}`;
+          applyBtn.disabled = c === 0 || akBulkApplying;
+        }
+      });
+    });
+    el.querySelector('#ak-bulk-apply')?.addEventListener('click', async () => {
+      if (akBulkApplying || !akBulkSourceId || akBulkTargets.size === 0) return;
+      const sourceCfg = akData.accounts[akBulkSourceId];
+      if (!sourceCfg) return;
+      akBulkApplying = true;
+      draw();
+      const patch = {
+        collectRewards:   sourceCfg.collectRewards,
+        kickPartyMembers: sourceCfg.kickPartyMembers,
+        transferMaterials: sourceCfg.transferMaterials,
+        autoLeave:        sourceCfg.autoLeave,
+        autoReinvite:     sourceCfg.autoReinvite,
+        autoJoin:         sourceCfg.autoJoin,
+      };
+      for (const targetId of akBulkTargets) {
+        try { akData = await window.glowAPI.autokick.updateConfig(targetId, patch); } catch {}
+        try { await window.glowAPI.autokick.toggle(targetId, sourceCfg.isActive); } catch {}
+      }
+      akBulkApplying = false;
+      akBulkOpen = false;
+      draw();
+    });
+  }
 }
 
 // ─── IPC listeners ───────────────────────────────────────────

@@ -226,7 +226,6 @@ async function createXMPPConnection(
 
   // ── Session started: enviar presencia para mantener conexión ──
   xmpp.on('session:started', () => {
-    console.log(`[XMPP] ${displayName} → session:started ✅`);
     send('autokick:log', { accountId, displayName, type: 'info', message: 'XMPP connected' });
 
     // Iniciar polling de respaldo cada 60s
@@ -235,14 +234,12 @@ async function createXMPPConnection(
 
   // ── Disconnected: reconectar solo si no fue intencional y cuenta sigue activa ──
   xmpp.on('disconnected', async () => {
-    console.log(`[XMPP] ${displayName} → disconnected`);
     xmppConnections.delete(accountId);
     send('autokick:log', { accountId, displayName, type: 'warn', message: 'XMPP disconnected' });
 
     // No reconectar si fue desconexión intencional (toggle off, cleanup)
     if (intentionalDisconnects.has(accountId)) {
       intentionalDisconnects.delete(accountId);
-      console.log(`[XMPP] ${displayName} → intentional disconnect, NOT reconnecting`);
       return;
     }
 
@@ -251,14 +248,12 @@ async function createXMPPConnection(
       const akData = await getAutoKickData(storage);
       const cfg = akData.accounts[accountId];
       if (!cfg || !cfg.isActive) {
-        console.log(`[XMPP] ${displayName} → account inactive, NOT reconnecting`);
         send('autokick:status-update', [{ accountId, displayName, connected: false, error: 'Disabled' }]);
         return;
       }
     } catch {}
 
     // Reconectar después de delay
-    console.log(`[XMPP] ${displayName} → will reconnect in ${TIMING_CONFIG.XMPP_RECONNECT_DELAY / 1000}s...`);
     send('autokick:status-update', [{ accountId, displayName, connected: false, error: 'Reconnecting...' }]);
 
     setTimeout(async () => {
@@ -266,18 +261,13 @@ async function createXMPPConnection(
       try {
         const akData = await getAutoKickData(storage);
         const cfg = akData.accounts[accountId];
-        if (!cfg || !cfg.isActive) {
-          console.log(`[XMPP] ${displayName} → account inactive (pre-reconnect), aborting`);
-          return;
-        }
+        if (!cfg || !cfg.isActive) return;
       } catch {}
 
-      console.log(`[XMPP] ${displayName} → reconnecting...`);
       try {
         await createXMPPConnection(storage, accountId, displayName, accountData);
         send('autokick:status-update', [{ accountId, displayName, connected: true }]);
       } catch (e: any) {
-        console.log(`[XMPP] ${displayName} → reconnect FAILED: ${e?.message}`);
         send('autokick:status-update', [{ accountId, displayName, connected: false, error: e?.message }]);
       }
     }, TIMING_CONFIG.XMPP_RECONNECT_DELAY);
@@ -293,9 +283,7 @@ async function createXMPPConnection(
         const parsed = JSON.parse(bodyMatch[1]);
         if (parsed.type === PARTY_UPDATED_EVENT) {
           // party_state_updated contiene el meta del party directamente desde XMPP
-          // → sin llamada HTTP, igual que Aerial Launcher
           const partyMeta: Partial<Record<string, string>> = parsed.party_state_updated ?? {};
-          console.log(`[XMPP] ${displayName} → PARTY_UPDATED detected`);
           handlePartyUpdate(storage, accountId, displayName, accountData, partyMeta).catch(() => {});
         }
       } catch {}
@@ -316,7 +304,6 @@ async function createXMPPConnection(
   // Limpiar flag de intencional por si quedó residual
   intentionalDisconnects.delete(accountId);
   xmppConnections.set(accountId, xmpp);
-  console.log(`[XMPP] ${displayName} → connection stored, ready ✅`);
 }
 
 async function connectAccountAsync(
@@ -354,12 +341,9 @@ function startBackupPolling(storage: Storage, accountId: string, displayName: st
       if (partyResult.refreshedToken) liveTokens.set(accountId, partyResult.refreshedToken);
 
       if (isInSTWMission(partyResult.meta)) {
-        console.log(`[XMPP] ${displayName} → backup polling: JoiningExistingSession detected, triggering handler`);
         const accountData = await getStoredAccount(accountId);
         if (accountData) {
-          handlePartyUpdate(storage, accountId, displayName, accountData, partyResult.meta).catch((e) => {
-            console.log(`[XMPP] ${displayName} → backup polling handler error:`, e?.message);
-          });
+          handlePartyUpdate(storage, accountId, displayName, accountData, partyResult.meta).catch(() => {});
         }
       }
     } catch {}
@@ -380,7 +364,6 @@ async function handlePartyUpdate(
   // Evitar procesamiento duplicado
   const existing = activeMonitoring.get(accountId);
   if (existing && existing.processing) {
-    console.log(`[XMPP] ${displayName} → already processing, skipping event`);
     return;
   }
 
@@ -392,7 +375,6 @@ async function handlePartyUpdate(
     const config = autoKickEntry.accounts[accountId];
 
     if (!config || !config.isActive) {
-      console.log(`[XMPP] ${displayName} → account not active, ignoring`);
       return;
     }
 
@@ -409,12 +391,10 @@ async function handlePartyUpdate(
 
     // ── Leer matchmakingState del meta XMPP directamente (sin HTTP) ────────────────
     if (!isInSTWMission(partyMeta)) {
-      console.log(`[XMPP] ${displayName} → PARTY_UPDATED but not JoiningExistingSession, ignoring`);
       return;
     }
 
     send('autokick:log', { accountId, displayName, type: 'info', message: 'STW mission detected — capturing baseline...' });
-    console.log(`[XMPP] ${displayName} → JoiningExistingSession confirmed, getting matches_played baseline...`);
 
     // ── Capturar baseline de matches_played via MCP ───────────────────────
     const mcpBaseline = await getMCPMatchesPlayed(accountId, token, storage);
@@ -428,25 +408,24 @@ async function handlePartyUpdate(
       accountId, displayName, type: 'info',
       message: `Mission started (baseline matches_played: ${matchesPlayedBaseline}) — waiting for completion...`,
     });
-    console.log(`[XMPP] ${displayName} → baseline=${matchesPlayedBaseline}, polling MCP every ${TIMING_CONFIG.MISSION_COMPLETE_CHECK_INTERVAL / 1000}s...`);
 
     // ── Esperar incremento de matches_played ─────────────────────────────
     const currentToken = token;
+    const storedSettings = storageRef ? await storageRef.get<any>('settings') : null;
+    const checkIntervalMs = storedSettings?.automationTimings?.autokickCheckMs ?? TIMING_CONFIG.MISSION_COMPLETE_CHECK_INTERVAL;
     const completed = await waitForMissionComplete(
       accountId,
       currentToken,
       storage,
       matchesPlayedBaseline,
-      TIMING_CONFIG.MISSION_COMPLETE_CHECK_INTERVAL
+      checkIntervalMs
     );
     if (!completed) {
       send('autokick:log', { accountId, displayName, type: 'warn', message: 'Mission ended unexpectedly' });
-      console.log(`[XMPP] ${displayName} → mission ended unexpectedly`);
       return;
     }
 
     send('autokick:log', { accountId, displayName, type: 'success', message: 'Mission completed!' });
-    console.log(`[XMPP] ${displayName} → mission completed! Executing actions...`);
 
     // Refrescar token antes de acciones
     const freshToken = await refreshAccountToken(storage, accountId);
@@ -454,12 +433,10 @@ async function handlePartyUpdate(
 
     await executeAutoKickActions(storage, accountId, displayName, freshToken || currentToken, config);
   } catch (error: any) {
-    console.log(`[XMPP] ${displayName} → handlePartyUpdate ERROR:`, error?.message);
     send('autokick:log', { accountId, displayName, type: 'error', message: `Error: ${error?.message}` });
   } finally {
     // Limpiar estado de procesamiento
     activeMonitoring.delete(accountId);
-    console.log(`[XMPP] ${displayName} → processing complete, back to listen mode`);
   }
 }
 
@@ -576,8 +553,6 @@ export async function disconnectAutoKick(accountId: string): Promise<void> {
 
   activeMonitoring.delete(accountId);
   liveTokens.delete(accountId);
-  
-  console.log(`[XMPP] ${accountId} → intentional disconnect complete`);
 }
 
 function defaultConfig(active: boolean): AutoKickAccountConfig {

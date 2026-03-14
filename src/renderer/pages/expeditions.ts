@@ -82,6 +82,12 @@ let abandoningIds = new Set<string>();
 let logs: LogEntry[] = [];
 const MAX_LOGS = 100;
 
+// ── Bulk copy state ───────────────────────────────────────────
+let expBulkOpen = false;
+let expBulkSourceId = '';
+let expBulkTargets: Set<string> = new Set();
+let expBulkApplying = false;
+
 const REWARD_TYPES = [
   { id: 'Heroes', label: 'Heroes' },
   { id: 'Survivors', label: 'Survivors' },
@@ -218,9 +224,15 @@ function draw(): void {
 
   el.innerHTML = `
     <div class="autoexp-page">
-      <div class="autoexp-header">
-        <h1 class="page-title">Auto-Expeditions</h1>
-        <p class="page-subtitle">Automated STW expedition management — collect rewards & send expeditions every hour</p>
+      <div class="autoexp-header page-header-row">
+        <div>
+          <h1 class="page-title">Auto-Expeditions</h1>
+          <p class="page-subtitle">Automated STW expedition management — collect rewards &amp; send expeditions every hour</p>
+        </div>
+        <button class="bulk-copy-btn" id="exp-bulk-open" ${accounts.length < 2 ? 'disabled' : ''} title="Copy reward type config from one account to others">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          Copy to All
+        </button>
       </div>
 
       <div class="autoexp-cards">${cardsHtml}</div>
@@ -231,12 +243,64 @@ function draw(): void {
         <h3 class="autoexp-log-title">Activity Log</h3>
         <div class="autoexp-log-list">${logsHtml}</div>
       </div>
+      ${expBulkOpen ? renderExpBulkModal() : ''}
     </div>`;
 
   bindEvents();
 }
 
-// ── Auto-config card ──────────────────────────────────────────
+function renderExpBulkModal(): string {
+  const srcOpts = accounts
+    .map((a) => `<option value="${esc(a.accountId)}" ${a.accountId === expBulkSourceId ? 'selected' : ''}>${esc(a.displayName)}</option>`)
+    .join('');
+  const targets = accounts
+    .map((a) => {
+      const isSrc = a.accountId === expBulkSourceId;
+      const checked = !isSrc && expBulkTargets.has(a.accountId);
+      const srcTypes = expData.accounts[expBulkSourceId]?.rewardTypes ?? [];
+      return `
+        <label class="bulk-target-item${isSrc ? ' bulk-target-source' : ''}">
+          <input type="checkbox" class="bulk-target-check" data-target-id="${a.accountId}" ${checked ? 'checked' : ''} ${isSrc ? 'disabled' : ''}>
+          <span>${esc(a.displayName)}</span>
+          ${isSrc ? `<span class="bulk-source-label">(${srcTypes.length ? srcTypes.join(', ') : 'none'})</span>` : ''}
+        </label>`;
+    })
+    .join('');
+  const count = expBulkTargets.size;
+  return `
+    <div class="bulk-modal-overlay" id="exp-bulk-overlay">
+      <div class="bulk-modal">
+        <div class="bulk-modal-header">
+          <h4>Copy Reward Types to Accounts</h4>
+          <button class="bulk-modal-close" id="exp-bulk-close">&times;</button>
+        </div>
+        <div class="bulk-modal-body">
+          <div class="bulk-field">
+            <label class="bulk-label">Copy reward types from</label>
+            <select class="bulk-source-select" id="exp-bulk-source">${srcOpts}</select>
+          </div>
+          <div class="bulk-field">
+            <div class="bulk-targets-header">
+              <label class="bulk-label">Apply to</label>
+              <div class="bulk-targets-actions">
+                <button class="bulk-sel-all" id="exp-sel-all">All</button>
+                <button class="bulk-sel-none" id="exp-sel-none">None</button>
+              </div>
+            </div>
+            <div class="bulk-targets-list">${targets}</div>
+          </div>
+        </div>
+        <div class="bulk-modal-footer">
+          <button class="bulk-cancel" id="exp-bulk-cancel">Cancel</button>
+          <button class="bulk-apply" id="exp-bulk-apply" ${!expBulkSourceId || count === 0 || expBulkApplying ? 'disabled' : ''}>
+            ${expBulkApplying ? '⏳ Applying...' : `Apply to ${count} account${count !== 1 ? 's' : ''}`}
+          </button>
+        </div>
+      </div>
+    </div>`;
+}
+
+// ── Auto-config card ───────────────────────────────────────────────
 
 function renderAutoCard(acc: ExpAccount): string {
   const cfg = expData.accounts[acc.accountId];
@@ -663,6 +727,64 @@ function bindEvents(): void {
       await loadExpeditionList();
     });
   });
+
+  // ── Bulk copy ──────────────────────────────────────────────
+  el.querySelector('#exp-bulk-open')?.addEventListener('click', () => {
+    expBulkSourceId = accounts[0]?.accountId ?? '';
+    expBulkTargets = new Set(accounts.filter((a) => a.accountId !== expBulkSourceId).map((a) => a.accountId));
+    expBulkOpen = true;
+    draw();
+  });
+
+  if (expBulkOpen) {
+    const closeBulk = () => { expBulkOpen = false; draw(); };
+    el.querySelector('#exp-bulk-close')?.addEventListener('click', closeBulk);
+    el.querySelector('#exp-bulk-cancel')?.addEventListener('click', closeBulk);
+    el.querySelector('#exp-bulk-overlay')?.addEventListener('click', (e) => {
+      if ((e.target as HTMLElement).id === 'exp-bulk-overlay') closeBulk();
+    });
+    el.querySelector<HTMLSelectElement>('#exp-bulk-source')?.addEventListener('change', (e) => {
+      expBulkSourceId = (e.target as HTMLSelectElement).value;
+      expBulkTargets = new Set(accounts.filter((a) => a.accountId !== expBulkSourceId).map((a) => a.accountId));
+      draw();
+    });
+    el.querySelector('#exp-sel-all')?.addEventListener('click', () => {
+      expBulkTargets = new Set(accounts.filter((a) => a.accountId !== expBulkSourceId).map((a) => a.accountId));
+      draw();
+    });
+    el.querySelector('#exp-sel-none')?.addEventListener('click', () => {
+      expBulkTargets = new Set();
+      draw();
+    });
+    el.querySelectorAll<HTMLInputElement>('.bulk-target-check').forEach((cb) => {
+      cb.addEventListener('change', () => {
+        const id = cb.dataset.targetId!;
+        if (cb.checked) expBulkTargets.add(id);
+        else expBulkTargets.delete(id);
+        const applyBtn = el?.querySelector<HTMLButtonElement>('#exp-bulk-apply');
+        if (applyBtn) {
+          const c = expBulkTargets.size;
+          applyBtn.textContent = `Apply to ${c} account${c !== 1 ? 's' : ''}`;
+          applyBtn.disabled = c === 0 || expBulkApplying;
+        }
+      });
+    });
+    el.querySelector('#exp-bulk-apply')?.addEventListener('click', async () => {
+      if (expBulkApplying || !expBulkSourceId || expBulkTargets.size === 0) return;
+      const srcCfg = expData.accounts[expBulkSourceId];
+      const srcTypes = srcCfg?.rewardTypes ?? [];
+      const srcActive = srcCfg?.isActive ?? false;
+      expBulkApplying = true;
+      draw();
+      for (const targetId of expBulkTargets) {
+        try { await window.glowAPI.expeditions.updateConfig(targetId, { rewardTypes: srcTypes }); } catch {}
+        try { await window.glowAPI.expeditions.toggle(targetId, srcActive, srcTypes); } catch {}
+      }
+      expBulkApplying = false;
+      expBulkOpen = false;
+      await reload();
+    });
+  }
 }
 
 // ── IPC listeners ─────────────────────────────────────────────

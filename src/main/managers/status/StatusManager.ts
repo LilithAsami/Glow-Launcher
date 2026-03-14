@@ -115,8 +115,6 @@ class StatusManager {
   ): Promise<XMPPInstance> {
     if (!this.storageRef) throw new Error('StatusManager not initialized');
 
-    console.log(`[STATUS-XMPP] Creating connection for ${displayName} (${platform})`);
-
     // Destroy existing connection
     if (this.connections.has(accountId)) {
       await this.destroyConnection(accountId);
@@ -158,7 +156,6 @@ class StatusManager {
 
       connection.once('session:started', () => {
         clearTimeout(timeout);
-        console.log(`[STATUS-XMPP] Session started for ${displayName} ✅`);
         try {
           connection.sendPresence({ show: 'chat' as any });
         } catch {}
@@ -218,7 +215,6 @@ class StatusManager {
       const instance = this.connections.get(accountId);
       if (instance?.manualDisconnect) return;
 
-      console.log(`[STATUS-XMPP] ${displayName} disconnected`);
       this.sendStatusUpdate(accountId, displayName, false, 'Disconnected');
 
       if (instance && !instance.isReconnecting) {
@@ -246,7 +242,6 @@ class StatusManager {
       const instance = this.connections.get(accountId);
       if (instance?.manualDisconnect) return;
 
-      console.log(`[STATUS-XMPP] ${displayName} session ended`);
       this.sendStatusUpdate(accountId, displayName, false, 'Session ended');
 
       if (instance && !instance.isReconnecting) {
@@ -268,7 +263,6 @@ class StatusManager {
     const retryCount = this.connectionRetryCount.get(accountId) || 0;
 
     if (retryCount >= MAX_RETRIES) {
-      console.log(`[STATUS-XMPP] Max retries reached for ${displayName}, deactivating`);
       this.connections.delete(accountId);
       this.connectionRetryCount.delete(accountId);
 
@@ -287,7 +281,6 @@ class StatusManager {
     this.connectionRetryCount.set(accountId, retryCount + 1);
     const delay = 5000 * (retryCount + 1);
 
-    console.log(`[STATUS-XMPP] Reconnect ${retryCount + 1}/${MAX_RETRIES} for ${displayName} in ${delay}ms`);
     this.sendStatusUpdate(accountId, displayName, false, `Reconnecting (${retryCount + 1}/${MAX_RETRIES})...`);
 
     setTimeout(async () => {
@@ -305,7 +298,6 @@ class StatusManager {
         );
 
         this.connectionRetryCount.delete(accountId);
-        console.log(`[STATUS-XMPP] Reconnect successful for ${displayName}`);
       } catch (e: any) {
         console.error(`[STATUS-XMPP] Reconnect failed for ${displayName}: ${e?.message}`);
         setTimeout(() => this.handleReconnect(accountId, displayName, platform), 1000);
@@ -338,8 +330,6 @@ class StatusManager {
     let errors = 0;
     const entries = Object.entries(data.accounts).filter(([, e]) => e.activo);
 
-    console.log(`[STATUS-XMPP] Initializing ${entries.length} active statuses`);
-
     for (const [accountId, entry] of entries) {
       const acc = accsData.accounts.find((a) => a.accountId === accountId);
       if (!acc) {
@@ -360,7 +350,6 @@ class StatusManager {
     }
 
     await this.saveStatusData(data);
-    console.log(`[STATUS-XMPP] Init complete: ${success} ok, ${errors} errors`);
     return { success, errors, total: entries.length };
   }
 
@@ -550,7 +539,6 @@ class StatusManager {
         const acc = await this.getAccount(accountId);
         if (!acc) continue;
 
-        console.log(`[STATUS-XMPP] Verify: ${acc.displayName} not connected, reconnecting...`);
         try {
           await this.activateStatus(accountId, entry.mensaje, entry.plataforma, entry.presenceMode);
         } catch (e: any) {

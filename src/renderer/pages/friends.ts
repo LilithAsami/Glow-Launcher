@@ -35,6 +35,8 @@ let loading = false;
 let actionInProgress: string | null = null; // accountId of item being acted on
 let statusMsg: { text: string; type: 'success' | 'error' } | null = null;
 let statusTimer: ReturnType<typeof setTimeout> | null = null;
+let bulkProcessing: 'outgoing' | 'incoming' | null = null;
+let bulkProgress = { current: 0, total: 0 };
 
 // ── Helpers ───────────────────────────────────────────────
 
@@ -162,7 +164,7 @@ async function handleRemoveAll(): Promise<void> {
   draw();
 
   try {
-    const result = await window.glowAPI.friends.removeAll();
+    const result = await window.glowAPI.friends.clearAll();
     if (result.success) {
       setStatus(result.message || 'All friends removed', 'success');
       loadFriends();
@@ -175,6 +177,63 @@ async function handleRemoveAll(): Promise<void> {
     actionInProgress = null;
     draw();
   }
+}
+
+async function handleBulkCancel(): Promise<void> {
+  if (bulkProcessing) return;
+  if (!confirm(`Cancel all ${outgoingList.length} sent requests?`)) return;
+
+  bulkProcessing = 'outgoing';
+  const items = [...outgoingList];
+  bulkProgress = { current: 0, total: items.length };
+  draw();
+
+  for (const item of items) {
+    if (!bulkProcessing) break; // cancelled
+    try {
+      await window.glowAPI.friends.cancel(item.accountId);
+      outgoingList = outgoingList.filter(f => f.accountId !== item.accountId);
+    } catch { /* continue */ }
+    bulkProgress.current++;
+    draw();
+    // Rate limit: 1 per second = max 60/min
+    if (bulkProgress.current < items.length) {
+      await new Promise(r => setTimeout(r, 1000));
+    }
+  }
+
+  bulkProcessing = null;
+  setStatus(`Cancelled ${bulkProgress.current} of ${items.length} sent requests`, 'success');
+  bulkProgress = { current: 0, total: 0 };
+  loadFriends();
+}
+
+async function handleBulkReject(): Promise<void> {
+  if (bulkProcessing) return;
+  if (!confirm(`Reject all ${incomingList.length} received requests?`)) return;
+
+  bulkProcessing = 'incoming';
+  const items = [...incomingList];
+  bulkProgress = { current: 0, total: items.length };
+  draw();
+
+  for (const item of items) {
+    if (!bulkProcessing) break;
+    try {
+      await window.glowAPI.friends.reject(item.accountId);
+      incomingList = incomingList.filter(f => f.accountId !== item.accountId);
+    } catch { /* continue */ }
+    bulkProgress.current++;
+    draw();
+    if (bulkProgress.current < items.length) {
+      await new Promise(r => setTimeout(r, 1000));
+    }
+  }
+
+  bulkProcessing = null;
+  setStatus(`Rejected ${bulkProgress.current} of ${items.length} received requests`, 'success');
+  bulkProgress = { current: 0, total: 0 };
+  loadFriends();
 }
 
 async function handleAcceptAll(): Promise<void> {
@@ -264,9 +323,28 @@ function draw(): void {
       Remove All</button>`;
   }
   if (activeTab === 'incoming' && incomingList.length > 0) {
-    bulkHtml = `<button class="fr-bulk-btn fr-bulk-accept" id="fr-accept-all" ${actionInProgress ? 'disabled' : ''}>
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
-      Accept All</button>`;
+    bulkHtml = `
+      <button class="fr-bulk-btn fr-bulk-accept" id="fr-accept-all" ${actionInProgress || bulkProcessing ? 'disabled' : ''}>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+        Accept All</button>
+      <button class="fr-bulk-btn fr-bulk-danger" id="fr-reject-all" ${actionInProgress || bulkProcessing ? 'disabled' : ''}>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        Remove All</button>`;
+  }
+  if (activeTab === 'outgoing' && outgoingList.length > 0) {
+    bulkHtml = `<button class="fr-bulk-btn fr-bulk-danger" id="fr-cancel-all" ${bulkProcessing ? 'disabled' : ''}>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      Remove All</button>`;
+  }
+
+  // Bulk progress indicator
+  let progressHtml = '';
+  if (bulkProcessing && ((bulkProcessing === 'outgoing' && activeTab === 'outgoing') || (bulkProcessing === 'incoming' && activeTab === 'incoming'))) {
+    const pct = bulkProgress.total > 0 ? Math.round((bulkProgress.current / bulkProgress.total) * 100) : 0;
+    progressHtml = `<div class="fr-bulk-progress">
+      <div class="fr-bulk-progress-bar" style="width:${pct}%"></div>
+      <span class="fr-bulk-progress-text">${bulkProgress.current}/${bulkProgress.total}</span>
+    </div>`;
   }
 
   el.innerHTML = `
@@ -299,7 +377,9 @@ function draw(): void {
         ${bulkHtml}
       </div>
 
-      <div class="fr-list" id="fr-list">${listHtml}</div>
+      ${progressHtml}
+
+      <div class="fr-list${bulkProcessing ? ' fr-list--busy' : ''}" id="fr-list">${listHtml}</div>
 
       <div class="fr-add-bar">
         <div id="fr-status-bar">${statusMsg ? `<div class="fr-status fr-status-${statusMsg.type}">${esc(statusMsg.text)}</div>` : ''}</div>
@@ -480,6 +560,8 @@ function bindEvents(): void {
   // Bulk actions
   el.querySelector('#fr-remove-all')?.addEventListener('click', handleRemoveAll);
   el.querySelector('#fr-accept-all')?.addEventListener('click', handleAcceptAll);
+  el.querySelector('#fr-cancel-all')?.addEventListener('click', handleBulkCancel);
+  el.querySelector('#fr-reject-all')?.addEventListener('click', handleBulkReject);
 
   // Individual actions
   bindListActions();

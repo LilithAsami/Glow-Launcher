@@ -8,6 +8,7 @@ import { statusManager } from './managers/status/StatusManager';
 import { taxiManager } from './managers/taxi/TaxiManager';
 import { discordRpc } from './managers/discord/DiscordRpcManager';
 import { notificationManager } from './managers/notifications/NotificationManager';
+import { validateAndAutoDetect } from './helpers/cmd/detectFortnite';
 import type { AppConfig } from '../shared/types';
 
 let mainWindow: BrowserWindow | null = null;
@@ -42,6 +43,7 @@ function stopRamCleanup(): void {
 }
 
 // Must be called before app.whenReady()
+app.setAppUserModelId('GLOW Launcher');
 protocol.registerSchemesAsPrivileged([
   { scheme: 'glow-bg', privileges: { supportFetchAPI: true, stream: true, bypassCSP: true } }
 ]);
@@ -130,6 +132,12 @@ async function createWindow(): Promise<void> {
     discordRpc.initialize(storage).catch(() => {});
     // Initialize Notification Manager
     notificationManager.initialize(storage).catch(() => {});
+    // Auto-detect Fortnite path if not set or if the configured path is no longer valid
+    validateAndAutoDetect(storage).then((detected) => {
+      if (detected) {
+        mainWindow?.webContents.send('settings:path-detected', detected);
+      }
+    }).catch(() => {});
   });
 
   // Persist window bounds on close & handle tray

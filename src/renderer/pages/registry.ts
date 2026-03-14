@@ -29,6 +29,7 @@ import { epicAccountPage } from './epicaccount';
 import { giftsPage } from './gifts';
 import { fnlaunchPage } from './fnlaunch';
 import { libraryPage } from './library';
+import { lookupPage } from './lookup';
 
 // ============================================================
 //  PAGE REGISTRY  (sidebar pages only)
@@ -76,16 +77,7 @@ export const sidebarGroups: SidebarGroup[] = [
       autoresponderPage,
     ],
   },
-  {
-    label: 'EPIC GAMES',
-    pages: [
-      friendsPage,
-      epicAccountPage,
-      epicStatusPage,
-      redeemCodesPage,
-    ],
-  },
-  {
+    {
     label: 'BR',
     pages: [
       shopPage,
@@ -93,6 +85,16 @@ export const sidebarGroups: SidebarGroup[] = [
       vbucksPage,
       giftsPage,
       ghostequipPage,
+    ],
+  },
+  {
+    label: 'EPIC GAMES',
+    pages: [
+      friendsPage,
+      epicAccountPage,
+      epicStatusPage,
+      redeemCodesPage,
+      lookupPage,
     ],
   },
     {

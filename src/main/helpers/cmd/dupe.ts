@@ -30,29 +30,6 @@ interface ProfileLockInfo {
   updated: string | null;
 }
 
-// ─── Check if in homebase via campaign profile ─────────────────
-
-async function isInHomebase(
-  storage: Storage,
-  accountId: string,
-  token: string,
-): Promise<boolean> {
-  try {
-    const endpoint = `${Endpoints.MCP}/${accountId}/client/QueryProfile?profileId=campaign&rvn=-1`;
-    const { data } = await authenticatedRequest(storage, accountId, token, async (t) => {
-      const res = await axios.post(endpoint, {}, {
-        headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' },
-        timeout: 15_000,
-      });
-      return res.data;
-    });
-    const attrs = data?.profileChanges?.[0]?.profile?.stats?.attributes;
-    return !!attrs?.quest_manager?.objectiveDeferral;
-  } catch {
-    return false;
-  }
-}
-
 // ─── Try dupe (ModifyQuickbar) ───────────────────────────────
 
 async function tryDupe(
@@ -132,14 +109,6 @@ export async function executeDupe(storage: Storage): Promise<DupeResult> {
     const token = await refreshAccountToken(storage, main.accountId);
     if (!token) return { success: false, message: 'Failed to authenticate' };
 
-    // Step 1: Check if in homebase
-    const inHomebase = await isInHomebase(storage, main.accountId, token);
-
-    if (!inHomebase) {
-      return { success: false, message: 'You are not in a Homebase mission.\nJoin a Homebase mission first.' };
-    }
-
-    // Step 2: First attempt
     send('dupe:status', { status: 'attempting', message: 'Attempting dupe...' });
 
     const firstAttempt = await tryDupe(storage, main.accountId, token);
@@ -147,7 +116,6 @@ export async function executeDupe(storage: Storage): Promise<DupeResult> {
       return { success: true, message: `Dupe executed successfully on ${main.displayName}` };
     }
 
-    // Step 3: Check profile data
     send('dupe:status', { status: 'checking', message: 'Checking profile lock...' });
 
     const profileData = await getProfileData(storage, main.accountId, token);

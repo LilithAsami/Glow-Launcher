@@ -12,6 +12,12 @@ let logs: AutoDailyLogEntry[] = [];
 
 const MAX_LOGS = 80;
 
+// ─── Bulk copy state ─────────────────────────────────────────
+let adBulkOpen = false;
+let adBulkSourceId = '';
+let adBulkTargets: Set<string> = new Set();
+let adBulkApplying = false;
+
 // ─── Render ──────────────────────────────────────────────────
 
 function draw(): void {
@@ -73,8 +79,16 @@ function draw(): void {
 
   el.innerHTML = `
     <div class="page-autodaily">
-      <h1 class="page-title">AutoDaily</h1>
-      <p class="page-subtitle">Automatic STW daily login reward collection — runs at daily reset (00:00 UTC)</p>
+      <div class="page-header-row">
+        <div>
+          <h1 class="page-title">AutoDaily</h1>
+          <p class="page-subtitle">Automatic STW daily login reward collection — runs at daily reset (00:00 UTC)</p>
+        </div>
+        <button class="bulk-copy-btn" id="ad-bulk-open" ${accounts.length < 2 ? 'disabled' : ''} title="Copy enabled state from one account to others">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          Copy to All
+        </button>
+      </div>
 
       <div class="ad-controls">
         <button class="ad-run-now-btn" id="ad-run-now">▶ Run Now</button>
@@ -87,9 +101,64 @@ function draw(): void {
         <h3 class="ad-log-title">Activity Log</h3>
         <div class="ad-log-list" id="ad-log-list">${logsHtml}</div>
       </div>
+      ${adBulkOpen ? renderAdBulkModal() : ''}
     </div>`;
 
   bindEvents();
+}
+
+function renderAdBulkModal(): string {
+  const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const srcOpts = accounts
+    .map((a) => `<option value="${a.accountId}" ${a.accountId === adBulkSourceId ? 'selected' : ''}>${esc(a.displayName)}</option>`)
+    .join('');
+  const targets = accounts
+    .map((a) => {
+      const isSrc = a.accountId === adBulkSourceId;
+      const checked = !isSrc && adBulkTargets.has(a.accountId);
+      const srcCfg = adData.accounts[adBulkSourceId];
+      const srcActive = srcCfg?.isActive ?? false;
+      return `
+        <label class="bulk-target-item${isSrc ? ' bulk-target-source' : ''}">
+          <input type="checkbox" class="bulk-target-check" data-target-id="${a.accountId}" ${checked ? 'checked' : ''} ${isSrc ? 'disabled' : ''}>
+          <span>${esc(a.displayName)}</span>
+          ${isSrc ? `<span class="bulk-source-label">(source — ${srcActive ? 'enabled' : 'disabled'})</span>` : ''}
+        </label>`;
+    })
+    .join('');
+  const count = adBulkTargets.size;
+  const srcActive = adData.accounts[adBulkSourceId]?.isActive ?? false;
+  return `
+    <div class="bulk-modal-overlay" id="ad-bulk-overlay">
+      <div class="bulk-modal">
+        <div class="bulk-modal-header">
+          <h4>Copy State to Accounts</h4>
+          <button class="bulk-modal-close" id="ad-bulk-close">&times;</button>
+        </div>
+        <div class="bulk-modal-body">
+          <div class="bulk-field">
+            <label class="bulk-label">Copy enabled state from</label>
+            <select class="bulk-source-select" id="ad-bulk-source">${srcOpts}</select>
+          </div>
+          <div class="bulk-field">
+            <div class="bulk-targets-header">
+              <label class="bulk-label">Apply to (will ${srcActive ? 'enable' : 'disable'})</label>
+              <div class="bulk-targets-actions">
+                <button class="bulk-sel-all" id="ad-sel-all">All</button>
+                <button class="bulk-sel-none" id="ad-sel-none">None</button>
+              </div>
+            </div>
+            <div class="bulk-targets-list">${targets}</div>
+          </div>
+        </div>
+        <div class="bulk-modal-footer">
+          <button class="bulk-cancel" id="ad-bulk-cancel">Cancel</button>
+          <button class="bulk-apply" id="ad-bulk-apply" ${!adBulkSourceId || count === 0 || adBulkApplying ? 'disabled' : ''}>
+            ${adBulkApplying ? '⏳ Applying...' : `Apply to ${count} account${count !== 1 ? 's' : ''}`}
+          </button>
+        </div>
+      </div>
+    </div>`;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────
@@ -131,6 +200,61 @@ function bindEvents(): void {
       } finally {
         await reload();
       }
+    });
+  }
+
+  // ── Bulk copy ──────────────────────────────────────────────
+  el.querySelector('#ad-bulk-open')?.addEventListener('click', () => {
+    adBulkSourceId = accounts[0]?.accountId ?? '';
+    adBulkTargets = new Set(accounts.filter((a) => a.accountId !== adBulkSourceId).map((a) => a.accountId));
+    adBulkOpen = true;
+    draw();
+  });
+
+  if (adBulkOpen) {
+    const closeBulk = () => { adBulkOpen = false; draw(); };
+    el.querySelector('#ad-bulk-close')?.addEventListener('click', closeBulk);
+    el.querySelector('#ad-bulk-cancel')?.addEventListener('click', closeBulk);
+    el.querySelector('#ad-bulk-overlay')?.addEventListener('click', (e) => {
+      if ((e.target as HTMLElement).id === 'ad-bulk-overlay') closeBulk();
+    });
+    el.querySelector<HTMLSelectElement>('#ad-bulk-source')?.addEventListener('change', (e) => {
+      adBulkSourceId = (e.target as HTMLSelectElement).value;
+      adBulkTargets = new Set(accounts.filter((a) => a.accountId !== adBulkSourceId).map((a) => a.accountId));
+      draw();
+    });
+    el.querySelector('#ad-sel-all')?.addEventListener('click', () => {
+      adBulkTargets = new Set(accounts.filter((a) => a.accountId !== adBulkSourceId).map((a) => a.accountId));
+      draw();
+    });
+    el.querySelector('#ad-sel-none')?.addEventListener('click', () => {
+      adBulkTargets = new Set();
+      draw();
+    });
+    el.querySelectorAll<HTMLInputElement>('.bulk-target-check').forEach((cb) => {
+      cb.addEventListener('change', () => {
+        const id = cb.dataset.targetId!;
+        if (cb.checked) adBulkTargets.add(id);
+        else adBulkTargets.delete(id);
+        const applyBtn = el?.querySelector<HTMLButtonElement>('#ad-bulk-apply');
+        if (applyBtn) {
+          const c = adBulkTargets.size;
+          applyBtn.textContent = `Apply to ${c} account${c !== 1 ? 's' : ''}`;
+          applyBtn.disabled = c === 0 || adBulkApplying;
+        }
+      });
+    });
+    el.querySelector('#ad-bulk-apply')?.addEventListener('click', async () => {
+      if (adBulkApplying || !adBulkSourceId || adBulkTargets.size === 0) return;
+      const srcActive = adData.accounts[adBulkSourceId]?.isActive ?? false;
+      adBulkApplying = true;
+      draw();
+      for (const targetId of adBulkTargets) {
+        try { adData = await window.glowAPI.autodaily.toggle(targetId, srcActive); } catch {}
+      }
+      adBulkApplying = false;
+      adBulkOpen = false;
+      draw();
     });
   }
 }

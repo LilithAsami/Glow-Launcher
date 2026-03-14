@@ -227,6 +227,9 @@ export interface GlowAPI {
   settings: {
     notifyTrayChanged: (enabled: boolean) => void;
     notifyStartupChanged: (enabled: boolean) => void;
+    detectFortnitePath: () => Promise<{ success: boolean; path: string | null; error?: string }>;
+    onPathDetected: (cb: (path: string) => void) => void;
+    offPathDetected: () => void;
   };
   window: {
     minimize: () => void;
@@ -310,6 +313,7 @@ export interface GlowAPI {
   alerts: {
     getMissions: () => Promise<ZoneMissions[]>;
     getMissionsForce: () => Promise<ZoneMissions[]>;
+    getCompleted: () => Promise<{ success: boolean; claimData: AlertClaimEntry[]; error?: string }>;
   };
   locker: {
     generate: (filters: { types: string[]; rarities: string[]; chapters: string[]; exclusive: boolean; equippedItemIds?: string[] }) =>
@@ -418,6 +422,13 @@ export interface GlowAPI {
       type: 'personal' | 'teammate';
       error?: string;
     }>;
+    bulkPersonal: () => Promise<{
+      success: boolean;
+      totalConsumed: number;
+      accountsProcessed: number;
+      failed: number;
+      error?: string;
+    }>;
   };
   mcp: {
     execute: (operation: string, profileId: string) =>
@@ -451,6 +462,12 @@ export interface GlowAPI {
       Promise<{ success: boolean; results: { accountId: string; displayName: string; platform?: string }[]; error?: string }>;
     matchmaking: (targetInput: string) =>
       Promise<StalkMatchmakingResult>;
+  };
+  lookup: {
+    batch: (accountIds: string[]) =>
+      Promise<{ success: boolean; accounts?: { id: string; displayName: string; externalAuths: Record<string, unknown>; raw: Record<string, unknown> }[]; error?: string }>;
+    search: (searchTerm: string) =>
+      Promise<{ success: boolean; results: { accountId: string; displayName: string; platform?: string }[]; error?: string }>;
   };
   party: {
     info: () => Promise<PartyInfoResult>;
@@ -625,6 +642,7 @@ export interface GlowAPI {
     cancel: (friendId: string) => Promise<{ success: boolean; message?: string; error?: string }>;
     block: (userId: string) => Promise<{ success: boolean; message?: string; error?: string }>;
     removeAll: () => Promise<{ success: boolean; message?: string; removed: number; error?: string }>;
+    clearAll: () => Promise<{ success: boolean; message?: string; error?: string }>;
     acceptAll: () => Promise<{ success: boolean; message?: string; accepted: number; error?: string }>;
   };
   quests: {
@@ -731,6 +749,13 @@ export interface GlowAPI {
   };
   store: {
     getFreeGames: () => Promise<{ success: boolean; current: StoreGame[]; upcoming: StoreGame[]; error?: string }>;
+  };
+  updater: {
+    check: () => Promise<{ hasUpdate: boolean; currentVersion: string; release?: { tagName: string; name: string; body: string; htmlUrl: string; publishedAt: string; exeDownloadUrl: string | null; exeFileName: string | null; exeSize: number } }>;
+    downloadAndInstall: (url: string, filename: string) => Promise<{ success: boolean; error?: string; downloadPath?: string }>;
+    openReleases: () => Promise<void>;
+    openRepo: () => Promise<void>;
+    onProgress: (cb: (data: { phase: string; percent: number; downloaded?: number; total?: number }) => void) => void;
   };
 }
 
@@ -985,6 +1010,12 @@ export interface AlertModifier {
   icon: string;
 }
 
+export interface AlertClaimEntry {
+  missionAlertId: string;
+  redemptionDateUtc: string;
+  evictClaimDataAfterUtc: string;
+}
+
 export interface ProcessedMission {
   id: string;
   theaterId: string;
@@ -999,6 +1030,8 @@ export interface ProcessedMission {
   rewards: AlertRewardItem[];
   modifiers: AlertModifier[];
   hasAlerts: boolean;
+  /** GUIDs from missionAlertGuid — used to match against profile claimData */
+  alertGuids: string[];
 }
 
 export interface ZoneMissions {

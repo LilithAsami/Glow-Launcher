@@ -5,7 +5,7 @@
  *
  * 1. El evento XMPP PARTY_UPDATED trae `party_state_updated` con el meta del party.
  *    Se lee `Default:CampaignInfo_j` → CampaignInfo.matchmakingState directamente
- *    del payload XMPP, SIN hacer ninguna llamada HTTP. (igual que Aerial Launcher)
+ *    del payload XMPP, SIN hacer ninguna llamada HTTP
  *
  * 2. Cuando matchmakingState === 'JoiningExistingSession' (en misión STW):
  *    - Se captura baseline de `matches_played` vía MCP QueryProfile campaign

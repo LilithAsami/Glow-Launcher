@@ -4,8 +4,6 @@ import { invalidAccounts } from '../core/toolbar';
 const TOS_URL = 'https://drive.google.com/file/d/1jGCV_duxccWJo9n9dCt_eGf0iJ-CtFgz/view?usp=sharing';
 const EXCHANGE_CODE_URL = 'https://www.epicgames.com/id/api/redirect?clientId=3f69e56c7649492c8cc29f1af08a8a12&responseType=code';
 const AUTH_CODE_URL = 'https://www.epicgames.com/id/api/redirect?clientId=3f69e56c7649492c8cc29f1af08a8a12&responseType=code';
-const MAX_ACCOUNTS = 25;
-
 type View = 'loading' | 'tos' | 'list' | 'choose-method' | 'device-auth' | 'device-code' | 'exchange-input' | 'auth-code-input' | 'processing' | 'success' | 'error' | 'import-launchers' | 'import-results';
 
 let view: View = 'loading';
@@ -175,8 +173,6 @@ function drawList(): void {
       `;
       }).join('');
 
-  const canAdd = data.accounts.length < MAX_ACCOUNTS;
-
   el!.innerHTML = `
     <div class="page-accounts">
       <h1 class="page-title">Accounts</h1>
@@ -184,16 +180,14 @@ function drawList(): void {
 
       <div class="accounts-list">${accountsHtml}</div>
 
-      ${canAdd ? `
-        <button class="account-add-btn" id="btn-add-account">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
-               stroke="currentColor" stroke-width="2" stroke-linecap="round">
-            <line x1="12" y1="5" x2="12" y2="19"/>
-            <line x1="5" y1="12" x2="19" y2="12"/>
-          </svg>
-          Add Account
-        </button>
-      ` : `<p class="account-limit-text">Maximum of ${MAX_ACCOUNTS} accounts reached</p>`}
+      <button class="account-add-btn" id="btn-add-account">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <line x1="12" y1="5" x2="12" y2="19"/>
+          <line x1="5" y1="12" x2="19" y2="12"/>
+        </svg>
+        Add Account
+      </button>
     </div>
   `;
 

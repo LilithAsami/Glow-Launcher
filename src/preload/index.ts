@@ -12,6 +12,9 @@ contextBridge.exposeInMainWorld('glowAPI', {
   settings: {
     notifyTrayChanged: (enabled: boolean) => ipcRenderer.send('settings:tray-changed', enabled),
     notifyStartupChanged: (enabled: boolean) => ipcRenderer.send('settings:startup-changed', enabled),
+    detectFortnitePath: () => ipcRenderer.invoke('settings:detect-fortnite-path'),
+    onPathDetected: (cb: (p: string) => void) => ipcRenderer.on('settings:path-detected', (_e, p) => cb(p)),
+    offPathDetected: () => ipcRenderer.removeAllListeners('settings:path-detected'),
   },
   window: {
     minimize: () => ipcRenderer.send('window:minimize'),
@@ -93,6 +96,7 @@ contextBridge.exposeInMainWorld('glowAPI', {
   alerts: {
     getMissions: () => ipcRenderer.invoke('alerts:get-missions'),
     getMissionsForce: () => ipcRenderer.invoke('alerts:get-missions-force'),
+    getCompleted: () => ipcRenderer.invoke('alerts:get-completed'),
   },
   locker: {
     generate: (filters: { types: string[]; rarities: string[]; chapters: string[]; exclusive: boolean; equippedItemIds?: string[] }) =>
@@ -155,6 +159,7 @@ contextBridge.exposeInMainWorld('glowAPI', {
     getProfile: () => ipcRenderer.invoke('xpboosts:get-profile'),
     consume: (type: 'personal' | 'teammate', amount: number, targetAccountId?: string) =>
       ipcRenderer.invoke('xpboosts:consume', type, amount, targetAccountId),
+    bulkPersonal: () => ipcRenderer.invoke('xpboosts:bulk-personal'),
   },
   mcp: {
     execute: (operation: string, profileId: string) =>
@@ -169,6 +174,12 @@ contextBridge.exposeInMainWorld('glowAPI', {
       ipcRenderer.invoke('stalk:search', searchTerm),
     matchmaking: (targetInput: string) =>
       ipcRenderer.invoke('stalk:matchmaking', targetInput),
+  },
+  lookup: {
+    batch: (accountIds: string[]) =>
+      ipcRenderer.invoke('lookup:batch', accountIds),
+    search: (searchTerm: string) =>
+      ipcRenderer.invoke('lookup:search', searchTerm),
   },
   party: {
     info: () => ipcRenderer.invoke('party:info'),
@@ -283,6 +294,7 @@ contextBridge.exposeInMainWorld('glowAPI', {
     cancel: (friendId: string) => ipcRenderer.invoke('friends:cancel', friendId),
     block: (userId: string) => ipcRenderer.invoke('friends:block', userId),
     removeAll: () => ipcRenderer.invoke('friends:remove-all'),
+    clearAll: () => ipcRenderer.invoke('friends:clear-all'),
     acceptAll: () => ipcRenderer.invoke('friends:accept-all'),
   },
   expeditions: {
@@ -415,5 +427,20 @@ contextBridge.exposeInMainWorld('glowAPI', {
   },
   store: {
     getFreeGames: () => ipcRenderer.invoke('store:get-free-games'),
+  },
+  theme: {
+    fetchUrl: (url: string) => ipcRenderer.invoke('theme:fetch-url', url),
+    saveFile: (options?: { title?: string; defaultPath?: string; filters?: { name: string; extensions: string[] }[] }) => ipcRenderer.invoke('dialog:save-file', options),
+    writeFile: (filePath: string, content: string) => ipcRenderer.invoke('theme:write-file', filePath, content),
+    readFile: (filePath: string) => ipcRenderer.invoke('theme:read-file', filePath),
+  },
+  updater: {
+    check: () => ipcRenderer.invoke('updater:check'),
+    downloadAndInstall: (url: string, filename: string) => ipcRenderer.invoke('updater:download-install', url, filename),
+    openReleases: () => ipcRenderer.invoke('updater:open-releases'),
+    openRepo: () => ipcRenderer.invoke('updater:open-repo'),
+    onProgress: (cb: (data: { phase: string; percent: number; downloaded?: number; total?: number }) => void) => {
+      ipcRenderer.on('updater:progress', (_e, data) => cb(data));
+    },
   },
 });

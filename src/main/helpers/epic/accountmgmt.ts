@@ -146,7 +146,6 @@ export async function getAccountInfo(
     });
 
     const info = buildAccountInfo(res.data);
-    console.log(`[AccountMgmt] Loaded info for ${info.displayName}`);
     return { success: true, info };
   } catch (err: any) {
     // If 401, try refreshing Android token and retry once
@@ -230,7 +229,6 @@ export async function updateAccountField(
 
     if (res.status >= 200 && res.status < 300) {
       const info = buildAccountInfo(res.data?.accountInfo || res.data);
-      console.log(`[AccountMgmt] Updated ${field} → "${value}" OK`);
       return { success: true, info };
     }
 
