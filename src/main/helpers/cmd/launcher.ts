@@ -142,7 +142,6 @@ export interface LaunchResult {
 
 /**
  * Launch Fortnite for the selected (main) account.
- * Mirrors the bot's cmd.ts flow exactly.
  */
 export async function launchGame(storage: Storage): Promise<LaunchResult> {
   try {
@@ -210,6 +209,13 @@ export async function launchGame(storage: Storage): Promise<LaunchResult> {
 
     send('launch:status', { status: 'launching', message: 'Launching Fortnite...' });
 
+    // Load extra launch args from FN Launch Settings
+    let extraArgs = '';
+    try {
+      const fnlaunchData = await storage.get<{ launchArgs?: string }>('fnlaunch');
+      if (fnlaunchData?.launchArgs) extraArgs = ' ' + fnlaunchData.launchArgs.trim();
+    } catch { /* ignore */ }
+
     // Step 4: Build and execute CMD — binPath already points to the exact folder
     const cmd = `start "" /d "${binPath}" FortniteLauncher.exe` +
       ` -AUTH_LOGIN=unused` +
@@ -218,7 +224,8 @@ export async function launchGame(storage: Storage): Promise<LaunchResult> {
       ` -epicapp=Fortnite` +
       ` -epicenv=Prod` +
       ` -EpicPortal` +
-      ` -epicuserid=${account.accountId}`;
+      ` -epicuserid=${account.accountId}` +
+      extraArgs;
 
     return new Promise((resolve) => {
       exec(cmd, { shell: 'cmd.exe' }, (error) => {

@@ -4,6 +4,7 @@ import type {
   ProcessedMission,
   AlertRewardItem,
 } from '../../shared/types';
+import { copyMissionToClipboard } from '../utils/missionScreenshot';
 
 let el: HTMLElement | null = null;
 let zones: ZoneMissions[] = [];
@@ -11,6 +12,48 @@ let loading = true;
 let error: string | null = null;
 let hasAccount = false;
 let activeTab: 'overview' | 'summary' = 'overview';
+let doneAlertIds: Set<string> = new Set();
+let countdownInterval: ReturnType<typeof setInterval> | null = null;
+
+function getNextRefreshStr(): string {
+  const now = new Date();
+  const midnight = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
+  const diff = midnight.getTime() - now.getTime();
+  const h = Math.floor(diff / 3_600_000);
+  const m = Math.floor((diff % 3_600_000) / 60_000);
+  const s = Math.floor((diff % 60_000) / 1_000);
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
+function startCountdown(): void {
+  if (countdownInterval) clearInterval(countdownInterval);
+  countdownInterval = setInterval(() => {
+    const span = el?.querySelector<HTMLElement>('#home-next-refresh-value');
+    if (span) span.textContent = getNextRefreshStr();
+  }, 1_000);
+}
+
+// ─── Filter state ───────────────────────────────────────────
+let showFilters = false;
+let filterZones: Set<string> = new Set();
+let filterMinPower = 0;
+let filterMaxPower = 0;
+let filterRewardIcons: Set<string> = new Set();
+let filterStatus: 'all' | 'done' | 'todo' = 'all';
+
+function hasActiveFilters(): boolean {
+  return filterZones.size > 0 || filterMinPower > 0 || filterMaxPower > 0 || filterRewardIcons.size > 0 || filterStatus !== 'all';
+}
+function countActiveFilters(): number {
+  return [filterZones.size > 0, filterMinPower > 0, filterMaxPower > 0, filterRewardIcons.size > 0, filterStatus !== 'all'].filter(Boolean).length;
+}
+function clearAllFilters(): void {
+  filterZones = new Set();
+  filterMinPower = 0;
+  filterMaxPower = 0;
+  filterRewardIcons = new Set();
+  filterStatus = 'all';
+}
 
 // ─── Shared world-info cache (renderer-side, UTC day) ────────
 
@@ -196,10 +239,24 @@ async function loadData(force = false): Promise<void> {
     zones = await getCachedMissions(force);
   } catch (err: any) {
     error = err?.message || 'Failed to load world info';
+    loading = false;
+    draw();
+    return;
   }
 
   loading = false;
   draw();
+
+  // Fetch completed alerts in background (non-blocking)
+  try {
+    const completed = await window.glowAPI.alerts.getCompleted();
+    if (completed?.success && completed.claimData) {
+      doneAlertIds = new Set(completed.claimData.map((c) => c.missionAlertId));
+      draw();
+    }
+  } catch {
+    // ignore — done indicators are optional
+  }
 }
 
 // ─── Drawing ─────────────────────────────────────────────────
@@ -269,10 +326,18 @@ function draw(): void {
       <div class="home-header">
         <div class="home-header-top">
           <h1 class="page-title">World Info</h1>
-          <button class="btn btn-sm btn-accent" id="home-refresh" title="Refresh">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
-            Refresh
-          </button>
+          <div class="home-header-right">
+            <div class="home-next-refresh" title="Time until daily reset (00:00 UTC)">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              <span id="home-next-refresh-value">${getNextRefreshStr()}</span>
+            </div>
+            <button class="home-refresh-btn" id="home-refresh" title="Refresh">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>
+                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+              </svg>
+            </button>
+          </div>
         </div>
         <div class="home-tabs">
           <button class="home-tab ${activeTab === 'overview' ? 'home-tab-active' : ''}" data-tab="overview">
@@ -296,15 +361,215 @@ function draw(): void {
 
 // ─── Overview tab ────────────────────────────────────────────
 
-function renderOverview(): string {
-  const allMissions = zones.flatMap((z) => z.missions);
+function isMissionDone(m: ProcessedMission): boolean {
+  if (doneAlertIds.size === 0) return false;
+  return m.alertGuids.some((guid) => doneAlertIds.has(guid));
+}
 
-  const sections = CATEGORIES.map((cat) => {
-    const matches = allMissions.filter(cat.filter);
-    return renderCategory(cat, matches);
+function getFilteredMissions(missions: ProcessedMission[]): ProcessedMission[] {
+  let result = missions;
+  if (filterZones.size > 0) {
+    result = result.filter((m) => filterZones.has(m.zone) || filterZones.has(m.zoneGeo));
+  }
+  if (filterMinPower > 0) result = result.filter((m) => m.power >= filterMinPower);
+  if (filterMaxPower > 0) result = result.filter((m) => m.power <= filterMaxPower);
+  if (filterRewardIcons.size > 0) {
+    result = result.filter((m) => [...m.alerts, ...m.rewards].some((r) => r.icon && filterRewardIcons.has(r.icon)));
+  }
+  if (filterStatus === 'todo') result = result.filter((m) => !isMissionDone(m));
+  return result;
+}
+
+const ZONE_LABELS: Record<string, string> = {
+  'Twine Peaks': 'Twine', 'Canny Valley': 'Canny', 'Plankerton': 'Plant.',
+  'Stonewood': 'Stone', 'Ventures': 'Vent.', 'Events or Campaign': 'Events',
+};
+
+// Priority sorter for reward filter pills
+function rewardSortPriority(icon: string): number {
+  const ic = icon.toLowerCase();
+  // V-Bucks
+  if (ic.includes('currency_mtxswap')) return 5;
+  // Event Gold
+  if (ic.includes('eventcurrency_scaling') || ic.includes('eventscaling')) return 8;
+  // Perk-UP (by rarity)
+  if (ic.includes('reagent_alteration_upgrade_sr')) return 10;
+  if (ic.includes('reagent_alteration_upgrade_vr')) return 11;
+  if (ic.includes('reagent_alteration_upgrade_r')) return 12;
+  if (ic.includes('reagent_alteration_upgrade_uc')) return 13;
+  if (ic.includes('reagent_alteration_upgrade')) return 14;
+  // Re-Perk!
+  if (ic.includes('reagent_alteration_generic')) return 20;
+  // Elemental alterations
+  if (ic.includes('reagent_alteration_ele')) return 22;
+  if (ic.includes('reagent_alteration_gameplay')) return 23;
+  // Hero vouchers (by rarity)
+  if (ic.includes('voucher_generic_hero_sr')) return 30;
+  if (ic.includes('voucher_generic_hero_vr')) return 31;
+  if (ic.includes('voucher_generic_hero')) return 32;
+  // Survivor / Lead survivor
+  if (ic.includes('voucher_generic_manager_sr')) return 40;
+  if (ic.includes('voucher_generic_manager')) return 41;
+  if (ic.includes('voucher_generic_worker_sr')) return 42;
+  if (ic.includes('voucher_generic_worker')) return 43;
+  // Defenders
+  if (ic.includes('voucher_generic_defender_sr')) return 50;
+  if (ic.includes('voucher_generic_defender')) return 51;
+  // Schematics
+  if (ic.includes('voucher_generic_ranged_sr')) return 60;
+  if (ic.includes('voucher_generic_ranged')) return 61;
+  if (ic.includes('voucher_generic_melee_sr')) return 62;
+  if (ic.includes('voucher_generic_melee')) return 63;
+  if (ic.includes('voucher_generic_trap_sr')) return 64;
+  if (ic.includes('voucher_generic_trap')) return 65;
+  // Llamas
+  if (ic.includes('voucher_cardpack_jackpot')) return 70;
+  if (ic.includes('voucher_cardpack')) return 71;
+  if (ic.includes('voucher_basicpack')) return 72;
+  if (ic.includes('currency_xrayllama')) return 73;
+  // Evolution mats (t01=Pure Drop, t02=Lightning, t03=Eye, t04=Storm Shard)
+  if (ic.includes('reagent_c_t01')) return 80;
+  if (ic.includes('reagent_c_t02')) return 81;
+  if (ic.includes('reagent_c_t03')) return 82;
+  if (ic.includes('reagent_c_t04')) return 83;
+  // Ingredients (ores)
+  if (ic.includes('brightcore') || ic.includes('sunbeam')) return 88;
+  if (ic.includes('obsidian') || ic.includes('shadowshard')) return 89;
+  if (ic.includes('malachite') || ic.includes('silver') || ic.includes('copper')) return 90;
+  if (ic.includes('reagent_people') || ic.includes('reagent_weapons') || ic.includes('reagent_traps')) return 92;
+  // XP
+  if (ic.includes('heroxp') || ic.includes('personnelxp') || ic.includes('schematicxp') || ic.includes('phoenixxp')) return 95;
+  // Event currencies
+  if (ic.includes('eventcurrency')) return 97;
+  return 99;
+}
+
+function renderFilterPanel(allMissions: ProcessedMission[]): string {
+  const zonesPresent = [...new Set(allMissions.map((m) => m.zone))];
+  const orderedZones = ['Twine Peaks', 'Canny Valley', 'Plankerton', 'Stonewood', 'Ventures', 'Events or Campaign']
+    .filter((z) => zonesPresent.includes(z));
+
+  const rewardMap = new Map<string, { icon: string; name: string }>();
+  for (const m of allMissions) {
+    for (const r of [...m.alerts, ...m.rewards]) {
+      if (r.icon && !rewardMap.has(r.icon)) rewardMap.set(r.icon, { icon: r.icon, name: r.name });
+    }
+  }
+  const rewards = [...rewardMap.values()].sort((a, b) => rewardSortPriority(a.icon) - rewardSortPriority(b.icon));
+
+  const powers = allMissions.map((m) => m.power).filter((p) => p > 0);
+  const minPow = powers.length ? Math.min(...powers) : 0;
+  const maxPow = powers.length ? Math.max(...powers) : 160;
+
+  return `
+    <div class="home-filters-panel">
+      <div class="home-filter-row">
+        <span class="home-filter-label">Zone</span>
+        <div class="home-filter-pills">
+          ${orderedZones.map((z) => `
+            <button class="home-filter-pill${filterZones.has(z) ? ' active' : ''}" data-fzone="${z}" title="${z}">${ZONE_LABELS[z] ?? z}</button>
+          `).join('')}
+        </div>
+      </div>
+      <div class="home-filter-row">
+        <span class="home-filter-label">Power</span>
+        <div class="home-filter-power-row">
+          <span class="home-filter-power-label">Min</span>
+          <input type="number" class="home-filter-power-input" id="home-fpow-min" min="${minPow}" max="${maxPow}" value="${filterMinPower > 0 ? filterMinPower : ''}" placeholder="${minPow}">
+          <span class="home-filter-power-label">Max</span>
+          <input type="number" class="home-filter-power-input" id="home-fpow-max" min="${minPow}" max="${maxPow}" value="${filterMaxPower > 0 ? filterMaxPower : ''}" placeholder="${maxPow}">
+        </div>
+      </div>
+      <div class="home-filter-row">
+        <span class="home-filter-label">Rewards</span>
+        <div class="home-filter-pills home-filter-pills-rewards">
+          ${rewards.map((r) => `
+            <button class="home-filter-reward-pill${filterRewardIcons.has(r.icon) ? ' active' : ''}" data-freward="${r.icon}" title="${r.name}">
+              <img src="${r.icon}" alt="">
+            </button>
+          `).join('')}
+        </div>
+      </div>
+      <div class="home-filter-row home-filter-row-bottom">
+        <span class="home-filter-label">Status</span>
+        <div class="home-filter-status-group">
+          <button class="home-filter-status${filterStatus === 'all' ? ' active' : ''}" data-fstatus="all">All</button>
+          <button class="home-filter-status${filterStatus === 'done' ? ' active' : ''}" data-fstatus="done">✓ Done</button>
+          <button class="home-filter-status${filterStatus === 'todo' ? ' active' : ''}" data-fstatus="todo">◎ To Do</button>
+        </div>
+        <button class="home-filter-clear" id="home-filter-clear">Clear All</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderDoneList(allMissions: ProcessedMission[]): string {
+  // Deduplicate by id (a mission may appear in multiple categories)
+  const seen = new Set<string>();
+  const doneMissions: ProcessedMission[] = [];
+  for (const m of allMissions) {
+    if (!seen.has(m.id) && isMissionDone(m)) {
+      seen.add(m.id);
+      doneMissions.push(m);
+    }
+  }
+  // Apply remaining active filters (zone, power, reward icons) but NOT status
+  let filtered = doneMissions;
+  if (filterZones.size > 0) filtered = filtered.filter((m) => filterZones.has(m.zone) || filterZones.has(m.zoneGeo));
+  if (filterMinPower > 0) filtered = filtered.filter((m) => m.power >= filterMinPower);
+  if (filterMaxPower > 0) filtered = filtered.filter((m) => m.power <= filterMaxPower);
+  if (filterRewardIcons.size > 0) {
+    filtered = filtered.filter((m) => [...m.alerts, ...m.rewards].some((r) => r.icon && filterRewardIcons.has(r.icon)));
+  }
+
+  if (filtered.length === 0) {
+    return `<div class="home-cat-empty" style="padding:24px 0;text-align:center">${doneAlertIds.size === 0 ? 'Loading completed missions data…' : 'No completed missions found today'}</div>`;
+  }
+
+  const rows = filtered.map((m) => {
+    const fakecat: HomeCategory = { id: 'done', title: '', icon: '', color: '', filter: () => true };
+    return renderHomeMission(m, fakecat);
   }).join('');
 
-  return `<div class="home-categories">${sections}</div>`;
+  return `
+    <div class="home-cat-section">
+      <div class="home-cat-title-bar">
+        <span style="font-size:15px">&#10003;</span>
+        <span class="home-cat-title">Completed Today</span>
+        <span class="home-cat-badge" style="background:#22c55e20;color:#22c55e;border-color:#22c55e40">${filtered.length}</span>
+      </div>
+      <div class="home-cat-missions">${rows}</div>
+    </div>
+  `;
+}
+
+function renderOverview(): string {
+  const allMissions = zones.flatMap((z) => z.missions);
+  const activeCount = countActiveFilters();
+
+  let content: string;
+  if (filterStatus === 'done') {
+    // Show flat unfiltered-by-category list of all completed missions
+    content = `<div class="home-categories">${renderDoneList(allMissions)}</div>`;
+  } else {
+    const sections = CATEGORIES.map((cat) => {
+      const catMissions = allMissions.filter(cat.filter);
+      const filtered = getFilteredMissions(catMissions);
+      return renderCategory(cat, filtered);
+    }).join('');
+    content = `<div class="home-categories">${sections}</div>`;
+  }
+
+  return `
+    <div class="home-filter-bar">
+      <button class="home-filter-toggle${showFilters ? ' active' : ''}" id="home-filter-toggle">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+        Filters${activeCount > 0 ? ` <span class="home-filter-badge">${activeCount}</span>` : ''}
+      </button>
+    </div>
+    ${showFilters ? renderFilterPanel(allMissions) : ''}
+    ${content}
+  `;
 }
 
 function renderCategory(cat: HomeCategory, missions: ProcessedMission[]): string {
@@ -328,20 +593,31 @@ function renderCategory(cat: HomeCategory, missions: ProcessedMission[]): string
 
 function renderHomeMission(m: ProcessedMission, cat: HomeCategory): string {
   const matchedRewards = cat.rewardFilter ? getMatchingRewards(m, cat.rewardFilter) : [];
-  const highlightPills = matchedRewards.map((r) => {
-    const icon = r.icon ? `<img src="${r.icon}" alt="" class="alert-pill-icon" onerror="this.style.display='none'">` : '';
-    const qty = r.quantity > 1 ? `<span class="alert-pill-qty">x${r.quantity}</span>` : '';
-    return `<span class="alert-pill home-pill-highlight" title="${r.name}${r.quantity > 1 ? ' x' + r.quantity : ''}">${icon}${qty}</span>`;
+  // Aggregate highlight rewards by icon path
+  const highlightGrouped = new Map<string, { r: typeof matchedRewards[0]; total: number }>();
+  for (const r of matchedRewards.filter((r) => r.icon)) {
+    const ex = highlightGrouped.get(r.icon!);
+    if (ex) ex.total += r.quantity;
+    else highlightGrouped.set(r.icon!, { r, total: r.quantity });
+  }
+  const highlightPills = [...highlightGrouped.values()].map(({ r, total }) => {
+    const icon = `<img src="${r.icon}" alt="" class="alert-pill-icon" onerror="this.style.display='none'">`;
+    const qty = total > 1 ? `<span class="alert-pill-qty">x${total}</span>` : '';
+    return `<span class="alert-pill home-pill-highlight" title="${r.name}${total > 1 ? ' x' + total : ''}">${icon}${qty}</span>`;
   }).join('');
 
   const allRewards = [...m.alerts, ...m.rewards].filter((r) => r.icon);
-  const otherPills = allRewards
-    .filter((r) => !cat.rewardFilter || !cat.rewardFilter(r))
-    .slice(0, 5)
-    .map((r) => {
-      const qty = r.quantity > 1 ? `<span class="alert-pill-qty">x${r.quantity}</span>` : '';
-      return `<span class="alert-pill" title="${r.name}${r.quantity > 1 ? ' x' + r.quantity : ''}"><img src="${r.icon}" alt="" class="alert-pill-icon" onerror="this.style.display='none'">${qty}</span>`;
-    }).join('');
+  // Aggregate other rewards by icon path
+  const otherGrouped = new Map<string, { r: typeof allRewards[0]; total: number }>();
+  for (const r of allRewards.filter((r) => !cat.rewardFilter || !cat.rewardFilter(r))) {
+    const ex = otherGrouped.get(r.icon!);
+    if (ex) ex.total += r.quantity;
+    else otherGrouped.set(r.icon!, { r, total: r.quantity });
+  }
+  const otherPills = [...otherGrouped.values()].slice(0, 5).map(({ r, total }) => {
+    const qty = total > 1 ? `<span class="alert-pill-qty">x${total}</span>` : '';
+    return `<span class="alert-pill" title="${r.name}${total > 1 ? ' x' + total : ''}"><img src="${r.icon}" alt="" class="alert-pill-icon" onerror="this.style.display='none'">${qty}</span>`;
+  }).join('');
 
   const modIcons = m.modifiers.slice(0, 4).map(
     (mod) => `<img src="${mod.icon}" alt="${mod.name}" title="${mod.name}" class="alert-mod-thumb" onerror="this.style.display='none'">`
@@ -352,8 +628,9 @@ function renderHomeMission(m: ProcessedMission, cat: HomeCategory): string {
   const zoneBadge = m.zone === 'V-Bucks' ? getZoneBadge(m.zoneGeo) : getZoneBadge(m.zone);
 
   return `
-    <div class="home-mission">
+    <div class="home-mission${isMissionDone(m) ? ' mission-done-row' : ''}">
       <div class="home-mission-left">
+        ${isMissionDone(m) ? '<span class="mission-done-dot" title="Already completed today"></span>' : ''}
         ${zoneBadge}
         <img src="${m.missionIcon}" alt="" class="alert-mission-icon" onerror="this.style.display='none'">
         <div class="home-mission-meta">
@@ -370,6 +647,9 @@ function renderHomeMission(m: ProcessedMission, cat: HomeCategory): string {
       <div class="home-mission-right">
         <div class="alert-mod-thumbs">${modIcons}</div>
         <div class="alert-reward-pills">${highlightPills}${otherPills}</div>
+        <button class="mission-copy-btn" data-mission-copy="${m.id}" title="Copy to clipboard">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+        </button>
       </div>
     </div>
   `;
@@ -441,6 +721,24 @@ function formatNumber(n: number): string {
 // ─── Events ──────────────────────────────────────────────────
 
 function bindEvents(): void {
+  // Mission copy-to-clipboard buttons
+  el?.querySelectorAll<HTMLButtonElement>('[data-mission-copy]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const mid = btn.dataset.missionCopy!;
+      const m = zones.flatMap((z) => z.missions).find((x) => x.id === mid);
+      if (!m) return;
+      const prev = btn.innerHTML;
+      btn.disabled = true;
+      try {
+        await copyMissionToClipboard(m);
+        btn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>';
+        setTimeout(() => { btn.innerHTML = prev; btn.disabled = false; }, 1600);
+      } catch {
+        btn.disabled = false;
+      }
+    });
+  });
+
   // Refresh
   el?.querySelector('#home-refresh')?.addEventListener('click', () => {
     loadData(true);
@@ -457,12 +755,69 @@ function bindEvents(): void {
     });
   });
 
+  // ── Filter toggle ────────────────────────────────────
+  el?.querySelector('#home-filter-toggle')?.addEventListener('click', () => {
+    showFilters = !showFilters;
+    draw();
+  });
+
+  // Zone filter pills
+  el?.querySelectorAll<HTMLElement>('[data-fzone]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const z = btn.dataset.fzone!;
+      if (filterZones.has(z)) filterZones.delete(z);
+      else filterZones.add(z);
+      draw();
+    });
+  });
+
+  // Status filter
+  el?.querySelectorAll<HTMLElement>('[data-fstatus]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      filterStatus = btn.dataset.fstatus as 'all' | 'done' | 'todo';
+      draw();
+    });
+  });
+
+  // Reward icon filter pills
+  el?.querySelectorAll<HTMLElement>('[data-freward]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const icon = btn.dataset.freward!;
+      if (filterRewardIcons.has(icon)) filterRewardIcons.delete(icon);
+      else filterRewardIcons.add(icon);
+      draw();
+    });
+  });
+
+  // Power inputs (debounced)
+  let powerTimer: ReturnType<typeof setTimeout> | null = null;
+  const onPowerInput = () => {
+    if (powerTimer) clearTimeout(powerTimer);
+    powerTimer = setTimeout(() => {
+      const minEl = el?.querySelector<HTMLInputElement>('#home-fpow-min');
+      const maxEl = el?.querySelector<HTMLInputElement>('#home-fpow-max');
+      filterMinPower = parseInt(minEl?.value || '0') || 0;
+      filterMaxPower = parseInt(maxEl?.value || '0') || 0;
+      draw();
+    }, 400);
+  };
+  el?.querySelector('#home-fpow-min')?.addEventListener('input', onPowerInput);
+  el?.querySelector('#home-fpow-max')?.addEventListener('input', onPowerInput);
+
+  // Clear all filters
+  el?.querySelector('#home-filter-clear')?.addEventListener('click', () => {
+    clearAllFilters();
+    draw();
+  });
+
   // Account changes
   window.glowAPI.accounts.onDataChanged(() => {
     _cachedZones = null;
     _cachedUTCDay = null;
     loadData();
   });
+
+  startCountdown();
 }
 
 // ─── Page Definition ─────────────────────────────────────────
@@ -487,6 +842,7 @@ export const homePage: PageDefinition = {
   },
 
   cleanup(): void {
+    if (countdownInterval) { clearInterval(countdownInterval); countdownInterval = null; }
     el = null;
   },
 };

@@ -24,7 +24,7 @@ function draw(): void {
       <div class="stalk-page">
         <div class="stalk-header">
           <h1 class="page-title">Stalk</h1>
-          <p class="page-subtitle">Look up a player's matchmaking session in real time</p>
+          <p class="page-subtitle">Look up a player's matchmaking session in real time (only STW)</p>
         </div>
         <div class="stalk-search-wrapper">
           <div class="stalk-search-bar">
@@ -104,7 +104,7 @@ function draw(): void {
   const contentSlot = el.querySelector('#stalk-content-slot');
   if (contentSlot) {
     if (stalking) {
-      contentSlot.innerHTML = `<div class="stalk-loading"><div class="stalk-loading-spinner"></div><span>Searching matchmaking session...</span></div>`;
+      contentSlot.innerHTML = `<div class="stalk-loading"><div class="stalk-loading-spinner"></div><span>Looking up player...</span></div>`;
     } else if (stalkResult) {
       contentSlot.innerHTML = renderResult(stalkResult);
     } else {
@@ -123,59 +123,26 @@ function renderResult(r: StalkMatchmakingResult): string {
     </div>`;
   }
 
-  if (!r.online) {
-    return `
-      <div class="stalk-result stalk-result--offline">
-        <div class="stalk-result-status">
-          <span class="stalk-badge stalk-badge--offline">
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="10"/></svg>
-            Offline
-          </span>
-        </div>
-        <div class="stalk-result-card">
-          <div class="stalk-info-row">
-            <span class="stalk-info-label">Player</span>
-            <span class="stalk-info-value">${escapeHtml(r.displayName || '')}</span>
-          </div>
-          <div class="stalk-info-row">
-            <span class="stalk-info-label">Account ID</span>
-            <span class="stalk-info-value stalk-mono">${r.accountId || ''}</span>
-          </div>
-          <div class="stalk-info-row">
-            <span class="stalk-info-label">Status</span>
-            <span class="stalk-info-value stalk-text-muted">Not in matchmaking</span>
-          </div>
-        </div>
-      </div>
-    `;
-  }
+  const statusLabel = !r.online
+    ? 'Not in game'
+    : r.isHomebase
+      ? 'Playing Save the World'
+      : 'Online';
 
-  // Online
-  const status = r.started ? 'In Game' : 'In Lobby';
-  const playersHTML = r.players && r.players.length > 0
-    ? r.players.map((p) => `
-        <div class="stalk-player-row">
-          <span class="stalk-player-index">${p.index}.</span>
-          <span class="stalk-player-name">${escapeHtml(p.displayName)}</span>
-        </div>
-      `).join('')
-    : '<span class="stalk-text-muted">No players data available</span>';
+  const badgeClass = !r.online
+    ? 'stalk-badge--offline'
+    : r.isHomebase
+      ? 'stalk-badge--online'
+      : 'stalk-badge--type';
 
   return `
-    <div class="stalk-result stalk-result--online">
+    <div class="stalk-result ${r.online ? 'stalk-result--online' : 'stalk-result--offline'}">
       <div class="stalk-result-status">
-        <span class="stalk-badge stalk-badge--online">
+        <span class="stalk-badge ${badgeClass}">
           <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="10"/></svg>
-          Online
-        </span>
-        <span class="stalk-badge stalk-badge--type">${escapeHtml(r.gameType || 'BR')}</span>
-        <span class="stalk-badge stalk-badge--status">${r.started
-          ? '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>'
-          : '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/></svg>'}
-          ${status}
+          ${escapeHtml(statusLabel)}
         </span>
       </div>
-
       <div class="stalk-result-card">
         <div class="stalk-info-row">
           <span class="stalk-info-label">Player</span>
@@ -184,40 +151,6 @@ function renderResult(r: StalkMatchmakingResult): string {
         <div class="stalk-info-row">
           <span class="stalk-info-label">Account ID</span>
           <span class="stalk-info-value stalk-mono">${r.accountId || ''}</span>
-        </div>
-        <div class="stalk-info-row">
-          <span class="stalk-info-label">Session ID</span>
-          <span class="stalk-info-value stalk-mono">${r.sessionId || 'N/A'}</span>
-        </div>
-        <div class="stalk-info-row">
-          <span class="stalk-info-label">Owner ID</span>
-          <span class="stalk-info-value stalk-mono">${r.ownerId || 'N/A'}</span>
-        </div>
-      </div>
-
-      <div class="stalk-result-card">
-        <div class="stalk-info-row">
-          <span class="stalk-info-label">Players</span>
-          <span class="stalk-info-value">${r.totalPlayers ?? 0} / ${r.maxPlayers ?? 'N/A'}</span>
-        </div>
-        <div class="stalk-info-row">
-          <span class="stalk-info-label">Mode</span>
-          <span class="stalk-info-value">${escapeHtml(r.gameMode || 'N/A')}</span>
-        </div>
-        <div class="stalk-info-row">
-          <span class="stalk-info-label">Region</span>
-          <span class="stalk-info-value">${escapeHtml(r.region || 'N/A')}</span>
-        </div>
-        <div class="stalk-info-row">
-          <span class="stalk-info-label">Server</span>
-          <span class="stalk-info-value stalk-mono">${r.serverAddress || 'N/A'}:${r.serverPort || 'N/A'}</span>
-        </div>
-      </div>
-
-      <div class="stalk-result-card stalk-players-card">
-        <h4 class="stalk-section-title">Players in Game (${r.players?.length || 0})</h4>
-        <div class="stalk-players-list">
-          ${playersHTML}
         </div>
       </div>
     </div>
@@ -340,7 +273,7 @@ function escapeAttr(str: string): string {
 export const stalkPage: PageDefinition = {
   id: 'stalk',
   label: 'Stalk',
-  icon: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`,
+  icon: `<img src="assets/icons/fnui/BR-STW/stalk.png" alt="Stalk" width="18" height="18" style="object-fit:contain;vertical-align:middle" />`,
   order: 19,
   render(container) {
     el = container;

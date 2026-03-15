@@ -19,6 +19,7 @@ export async function executeMcp(
   storage: Storage,
   operation: string,
   profileId: string,
+  payload?: Record<string, unknown>,
 ): Promise<McpResult> {
   try {
     const raw = (await storage.get<AccountsData>('accounts')) ?? { tosAccepted: false, accounts: [] };
@@ -29,13 +30,14 @@ export async function executeMcp(
     if (!token) return { success: false, error: 'Failed to refresh token' };
 
     const endpoint = `${Endpoints.MCP}/${main.accountId}/client/${operation}?profileId=${profileId}&rvn=-1`;
+    const body = payload ?? {};
 
     const { data } = await authenticatedRequest(
       storage,
       main.accountId,
       token,
       async (t: string) => {
-        const res = await axios.post(endpoint, {}, {
+        const res = await axios.post(endpoint, body, {
           headers: {
             Authorization: `Bearer ${t}`,
             'Content-Type': 'application/json',

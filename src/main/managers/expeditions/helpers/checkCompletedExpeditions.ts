@@ -1,4 +1,4 @@
-import { log } from '../../../../helpers/logger';
+import { log } from '../../logger';
 import { getCampaignData, CampaignDataResult } from './getCampaignData';
 
 export interface ExpeditionStatus {

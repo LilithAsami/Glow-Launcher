@@ -154,7 +154,6 @@ export async function getFriendsSummary(storage: Storage): Promise<{
     incoming.sort((a, b) => a.displayName.localeCompare(b.displayName));
     outgoing.sort((a, b) => a.displayName.localeCompare(b.displayName));
 
-    console.log(`[Friends] Loaded: ${friends.length} friends, ${incoming.length} incoming, ${outgoing.length} outgoing`);
     return { success: true, friends, incoming, outgoing };
   } catch (err: any) {
     const msg = apiError(err);
@@ -196,7 +195,6 @@ export async function addFriend(storage: Storage, input: string): Promise<{ succ
       return res.data;
     });
 
-    console.log(`[Friends] Friend request sent/accepted: ${input} (${targetId})`);
     return { success: true, message: `Friend request sent to ${input}` };
   } catch (err: any) {
     const msg = apiError(err);
@@ -220,7 +218,6 @@ export async function removeFriend(storage: Storage, friendId: string): Promise<
       return res.data;
     });
 
-    console.log(`[Friends] Removed friend: ${friendId}`);
     return { success: true, message: 'Friend removed' };
   } catch (err: any) {
     const msg = apiError(err);
@@ -245,7 +242,6 @@ export async function acceptFriend(storage: Storage, friendId: string): Promise<
       return res.data;
     });
 
-    console.log(`[Friends] Accepted friend: ${friendId}`);
     return { success: true, message: 'Friend request accepted' };
   } catch (err: any) {
     const msg = apiError(err);
@@ -269,7 +265,6 @@ export async function rejectFriend(storage: Storage, friendId: string): Promise<
       return res.data;
     });
 
-    console.log(`[Friends] Rejected friend request: ${friendId}`);
     return { success: true, message: 'Friend request declined' };
   } catch (err: any) {
     const msg = apiError(err);
@@ -293,7 +288,6 @@ export async function cancelRequest(storage: Storage, friendId: string): Promise
       return res.data;
     });
 
-    console.log(`[Friends] Cancelled request to: ${friendId}`);
     return { success: true, message: 'Request cancelled' };
   } catch (err: any) {
     const msg = apiError(err);
@@ -318,7 +312,6 @@ export async function blockUser(storage: Storage, userId: string): Promise<{ suc
       return res.data;
     });
 
-    console.log(`[Friends] Blocked user: ${userId}`);
     return { success: true, message: 'User blocked' };
   } catch (err: any) {
     const msg = apiError(err);
@@ -360,7 +353,6 @@ export async function removeAllFriends(storage: Storage): Promise<{ success: boo
       }
     }
 
-    console.log(`[Friends] Removed all friends: ${removed}/${friends.length}`);
     return { success: true, message: `Removed ${removed} of ${friends.length} friends`, removed };
   } catch (err: any) {
     const msg = apiError(err);
@@ -403,11 +395,33 @@ export async function acceptAllIncoming(storage: Storage): Promise<{ success: bo
       }
     }
 
-    console.log(`[Friends] Accepted all: ${accepted}/${incoming.length}`);
     return { success: true, message: `Accepted ${accepted} of ${incoming.length} requests`, accepted };
   } catch (err: any) {
     const msg = apiError(err);
     console.error('[Friends] acceptAllIncoming error:', msg);
     return { success: false, accepted: 0, error: msg };
+  }
+}
+
+/**
+ * Clear ALL friends using the bulk DELETE endpoint.
+ * DELETE /friends/api/v1/:accountId/friends
+ */
+export async function clearAllFriends(storage: Storage): Promise<{ success: boolean; message?: string; error?: string }> {
+  try {
+    const { main, token } = await getToken(storage);
+
+    await authenticatedRequest(storage, main.accountId, token, async (t) => {
+      await axios.delete(`${Endpoints.FRIENDS}/${main.accountId}/friends`, {
+        headers: { Authorization: `Bearer ${t}` },
+        timeout: 30_000,
+      });
+    });
+
+    return { success: true, message: 'All friends removed' };
+  } catch (err: any) {
+    const msg = apiError(err);
+    console.error('[Friends] clearAllFriends error:', msg);
+    return { success: false, error: msg };
   }
 }

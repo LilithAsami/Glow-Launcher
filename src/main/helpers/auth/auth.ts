@@ -50,6 +50,14 @@ export function cancelAuth(): void {
 // ─── Device Code Auth (Easy Login) ───────────────────────────
 
 export async function startDeviceAuth(storage: Storage): Promise<void> {
+  return _startDeviceCodeFlow(storage, true);
+}
+
+export async function startDeviceCodeDisplay(storage: Storage): Promise<void> {
+  return _startDeviceCodeFlow(storage, false);
+}
+
+async function _startDeviceCodeFlow(storage: Storage, autoOpenBrowser: boolean): Promise<void> {
   try {
     cancelAuth();
     authUpdate({ status: 'starting' });
@@ -70,13 +78,18 @@ export async function startDeviceAuth(storage: Storage): Promise<void> {
       },
     });
 
-    const url: string = da.data.verification_uri_complete;
+    const verificationUriComplete: string = da.data.verification_uri_complete;
+    const verificationUri: string = da.data.verification_uri;
+    const userCode: string = da.data.user_code;
     const code: string = da.data.device_code;
 
-    // 3. Open browser
-    shell.openExternal(url);
-
-    authUpdate({ status: 'waiting', verificationUrl: url });
+    // 3. Optionally open browser
+    if (autoOpenBrowser) {
+      shell.openExternal(verificationUriComplete);
+      authUpdate({ status: 'waiting', verificationUrl: verificationUriComplete });
+    } else {
+      authUpdate({ status: 'waiting', verificationUrl: verificationUri, userCode });
+    }
 
     // 4. Start polling
     await poll(storage, code);
@@ -168,6 +181,34 @@ export async function submitExchangeCode(storage: Storage, exchangeCode: string)
     authUpdate({
       status: 'error',
       message: err?.response?.data?.errorMessage || 'Invalid or expired exchange code',
+    });
+  }
+}
+
+// ─── Authorization Code Auth ─────────────────────────────────
+
+export async function submitAuthorizationCode(storage: Storage, code: string): Promise<void> {
+  try {
+    authUpdate({ status: 'processing' });
+
+    const params = new URLSearchParams({
+      grant_type: 'authorization_code',
+      code,
+      token_type: 'eg1',
+    });
+
+    const res = await axios.post(Endpoints.OAUTH_TOKEN, params, {
+      headers: {
+        Authorization: `basic ${ANDROID_CLIENT.auth}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+    });
+
+    await registerAccount(storage, res.data);
+  } catch (err: any) {
+    authUpdate({
+      status: 'error',
+      message: err?.response?.data?.errorMessage || 'Invalid or expired authorization code',
     });
   }
 }

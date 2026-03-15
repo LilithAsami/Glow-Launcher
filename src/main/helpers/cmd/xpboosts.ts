@@ -163,3 +163,98 @@ export async function consumeXPBoosts(
     return { ...result, error: err.message || 'Failed to consume XP boosts' };
   }
 }
+
+export interface XPBoostBulkResult {
+  success: boolean;
+  totalConsumed: number;
+  accountsProcessed: number;
+  failed: number;
+  error?: string;
+}
+
+/**
+ * Consume ALL personal XP boosts for every account in the launcher.
+ * Each account's boosts are applied to itself.
+ */
+export async function bulkPersonalXPBoosts(storage: Storage): Promise<XPBoostBulkResult> {
+  const result: XPBoostBulkResult = {
+    success: false,
+    totalConsumed: 0,
+    accountsProcessed: 0,
+    failed: 0,
+  };
+
+  try {
+    const raw = (await storage.get<AccountsData>('accounts')) ?? { tosAccepted: false, accounts: [] };
+    const accounts = raw.accounts;
+    if (accounts.length === 0) return { ...result, error: 'No accounts found' };
+
+    for (const acc of accounts) {
+      const token = await refreshAccountToken(storage, acc.accountId);
+      if (!token) {
+        result.failed++;
+        continue;
+      }
+
+      // Query campaign profile for personal boost item
+      const queryUrl = `${Endpoints.MCP}/${acc.accountId}/client/QueryProfile?profileId=campaign&rvn=-1`;
+      let itemId: string | null = null;
+      let quantity = 0;
+
+      try {
+        const { data } = await authenticatedRequest(storage, acc.accountId, token, async (t: string) => {
+          const res = await axios.post(queryUrl, {}, {
+            headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' },
+            timeout: 15_000,
+          });
+          return res.data;
+        });
+
+        const items = data?.profileChanges?.[0]?.profile?.items || {};
+        for (const [id, item] of Object.entries(items) as [string, any][]) {
+          if (item.templateId === 'ConsumableAccountItem:smallxpboost') {
+            itemId = id;
+            quantity = item.quantity || 0;
+            break;
+          }
+        }
+      } catch {
+        result.failed++;
+        continue;
+      }
+
+      result.accountsProcessed++;
+
+      if (!itemId || quantity === 0) continue;
+
+      // Consume all personal boosts for this account
+      const consumeUrl = `${Endpoints.MCP}/${acc.accountId}/client/ActivateConsumable?profileId=campaign&rvn=-1`;
+      for (let i = 0; i < quantity; i++) {
+        try {
+          await authenticatedRequest(storage, acc.accountId, token, async (t: string) => {
+            const res = await axios.post(consumeUrl, {
+              targetItemId: itemId,
+              targetAccountId: acc.accountId,
+            }, {
+              headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' },
+              timeout: 15_000,
+            });
+            return res.data;
+          });
+          result.totalConsumed++;
+        } catch (err: any) {
+          result.failed++;
+          const errCode = err?.response?.data?.errorCode as string | undefined;
+          if (errCode && (errCode.includes('not_enough') || errCode.includes('invalid') || errCode.includes('forbidden'))) {
+            break;
+          }
+        }
+      }
+    }
+
+    result.success = result.totalConsumed > 0 || result.accountsProcessed > 0;
+    return result;
+  } catch (err: any) {
+    return { ...result, error: err.message || 'Bulk boost failed' };
+  }
+}

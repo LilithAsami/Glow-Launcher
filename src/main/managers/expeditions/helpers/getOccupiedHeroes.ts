@@ -1,4 +1,4 @@
-import { log } from '../../../../helpers/logger';
+import { log } from '../../logger';
 import { getCampaignData } from './getCampaignData';
 
 export interface HeroItem {

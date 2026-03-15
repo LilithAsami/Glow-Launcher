@@ -48,6 +48,7 @@ export interface AccountsData {
 export interface AuthUpdate {
   status: 'starting' | 'waiting' | 'processing' | 'success' | 'error';
   verificationUrl?: string;
+  userCode?: string;
   message?: string;
   account?: { accountId: string; displayName: string };
   isUpdate?: boolean;
@@ -84,7 +85,7 @@ export interface AutoKickLogEntry {
   displayName: string;
   type: 'info' | 'success' | 'warn' | 'error';
   message: string;
-  rewards?: Record<string, { name: string; quantity: number }>;
+  rewards?: Record<string, { name: string; quantity: number; icon: string | null }>;
 }
 
 // ============================================================
@@ -127,20 +128,9 @@ export interface SecurityBanStatus {
 export interface StalkMatchmakingResult {
   success: boolean;
   online?: boolean;
+  isHomebase?: boolean;
   displayName?: string;
   accountId?: string;
-  sessionId?: string;
-  ownerId?: string;
-  totalPlayers?: number;
-  maxPlayers?: number | string;
-  started?: boolean;
-  gameType?: string;
-  gameMode?: string;
-  region?: string;
-  subRegion?: string;
-  serverAddress?: string;
-  serverPort?: string;
-  players?: { index: number; accountId: string; displayName: string }[];
   error?: string;
 }
 
@@ -234,6 +224,13 @@ export interface GlowAPI {
     set: (key: string, value: unknown) => Promise<void>;
     delete: (key: string) => Promise<void>;
   };
+  settings: {
+    notifyTrayChanged: (enabled: boolean) => void;
+    notifyStartupChanged: (enabled: boolean) => void;
+    detectFortnitePath: () => Promise<{ success: boolean; path: string | null; error?: string }>;
+    onPathDetected: (cb: (path: string) => void) => void;
+    offPathDetected: () => void;
+  };
   window: {
     minimize: () => void;
     maximize: () => void;
@@ -243,13 +240,18 @@ export interface GlowAPI {
     getAll: () => Promise<AccountsData>;
     acceptTos: () => Promise<void>;
     startDeviceAuth: () => Promise<void>;
+    startDeviceCode: () => Promise<void>;
     submitExchangeCode: (code: string) => Promise<void>;
+    submitAuthorizationCode: (code: string) => Promise<void>;
     cancelAuth: () => Promise<void>;
+    importFromLaunchers: () => Promise<{ results: Array<{ accountId: string; displayName: string; source: string; status: 'added' | 'existing' | 'error'; message?: string }> }>;
     remove: (accountId: string) => Promise<AccountsData>;
     setMain: (accountId: string) => Promise<AccountsData>;
+    reorder: (orderedIds: string[]) => Promise<AccountsData>;
     getAvatar: (accountId: string) => Promise<{ success: boolean; url: string }>;
     getAvatarCached: (accountId: string) => Promise<{ success: boolean; url: string }>;
     getAllAvatars: () => Promise<{ success: boolean; avatars: Record<string, string>; error?: string }>;
+    validateAll: () => Promise<Array<{ accountId: string; displayName: string; valid: boolean }>>;
     onAuthUpdate: (callback: (data: AuthUpdate) => void) => void;
     offAuthUpdate: () => void;
     onDataChanged: (callback: () => void) => void;
@@ -265,6 +267,27 @@ export interface GlowAPI {
     onLog: (cb: (entry: AutoKickLogEntry) => void) => void;
     offLog: () => void;
   };
+  expeditions: {
+    getStatus: () => Promise<{ success: boolean; data: any; accounts: any[] }>;
+    toggle: (accountId: string, active: boolean, rewardTypes: string[]) => Promise<any>;
+    updateConfig: (accountId: string, partial: Record<string, unknown>) => Promise<any>;
+    runCycle: (accountId: string) => Promise<any>;
+    list: (accountId: string) => Promise<{
+      success: boolean;
+      available?: any[];
+      sent?: any[];
+      completed?: any[];
+      slots?: { used: number; max: number };
+      error?: string;
+    }>;
+    send: (accountId: string, types: string[], amount: number) => Promise<any>;
+    collect: (accountId: string, expeditionIds?: string[]) => Promise<any>;
+    abandon: (accountId: string, expeditionIds: string[]) => Promise<any>;
+    onLog: (cb: (entry: { accountId: string; displayName: string; type: 'info' | 'success' | 'error' | 'warn'; message: string; timestamp: number }) => void) => void;
+    offLog: () => void;
+    onDataChanged: (cb: () => void) => void;
+    offDataChanged: () => void;
+  };
   security: {
     getAccountInfo: () => Promise<SecurityAccountInfo>;
     getDeviceAuths: () => Promise<SecurityDeviceAuth[]>;
@@ -275,32 +298,62 @@ export interface GlowAPI {
   };
   shell: {
     openExternal: (url: string) => Promise<void>;
+    openPath: (p: string) => Promise<void>;
   };
   launch: {
     start: () => Promise<{ success: boolean; message: string }>;
+    kill: () => Promise<{ success: boolean; message: string }>;
     onStatus: (cb: (data: { status: string; message: string }) => void) => void;
     offStatus: () => void;
   };
   dialog: {
     openDirectory: () => Promise<string | null>;
+    openFile: (options?: { title?: string; filters?: { name: string; extensions: string[] }[] }) => Promise<string | null>;
   };
   alerts: {
     getMissions: () => Promise<ZoneMissions[]>;
     getMissionsForce: () => Promise<ZoneMissions[]>;
+    getCompleted: () => Promise<{ success: boolean; claimData: AlertClaimEntry[]; error?: string }>;
   };
   locker: {
-    generate: (filters: { types: string[]; rarities: string[]; chapters: string[]; exclusive: boolean }) =>
+    generate: (filters: { types: string[]; rarities: string[]; chapters: string[]; exclusive: boolean; equippedItemIds?: string[] }) =>
       Promise<{ success: boolean; fileName?: string; path?: string; count?: number; time?: string; sizeMB?: string; error?: string }>;
     save: (sourcePath: string) => Promise<{ saved: boolean; path?: string }>;
   };
+  lockermgmt: {
+    getLoadout: () => Promise<{ slots: Record<string, LockerEquippedSlot>; displayName: string }>;
+    getOwned: () => Promise<LockerOwnedCosmetic[]>;
+    getOwnedForSlot: (slotKey: string) => Promise<LockerCosmeticMeta[]>;
+    resolveItems: (itemIds: string[]) => Promise<Record<string, LockerResolvedItem | null>>;
+    equip: (slotKey: string, itemId: string) => Promise<{ success: boolean; error?: string }>;
+    getCategories: () => Promise<LockerSlotCategory[]>;
+  };
   files: {
     getWorldInfo: () => Promise<{ success: boolean; data?: any; missions?: number; alerts?: number; theaters?: number; sizeMB?: string; error?: string }>;
+    workerPower: (targetLevel: number) => Promise<{ success: boolean; data?: any; workerCount?: number; heroCount?: number; modified?: number; sizeMB?: string; error?: string }>;
     save: (jsonString: string, defaultName: string) => Promise<{ saved: boolean; path?: string }>;
     devBuildStatus: () => Promise<{ found: boolean; activated: boolean; filePath: string | null; error?: string }>;
     devBuildToggle: () => Promise<{ success: boolean; activated?: boolean; message: string }>;
+    devStairsStatus: () => Promise<{ found: boolean; activated: boolean; filePath: string | null; error?: string }>;
+    devStairsToggle: () => Promise<{ success: boolean; activated?: boolean; message: string }>;
+    airStrikeStatus: () => Promise<{ found: boolean; activated: boolean; filePath: string | null; error?: string }>;
+    airStrikeToggle: () => Promise<{ success: boolean; activated?: boolean; message: string }>;
+    trapHeightList: () => Promise<{ name: string; guid: string; desc: string; defaultHeight: string; rarity: string; tier: string; family: string; heightSupported: boolean }[]>;
+    trapHeightPresets: () => Promise<{ label: string; hex: string; group: string }[]>;
+    trapHeightStatus: (guid: string) => Promise<{ found: boolean; isModified: boolean; currentHeight: string | null; error?: string }>;
+    trapHeightApply: (guid: string, newHeight: string) => Promise<{ success: boolean; message: string; currentHeight?: string; isModified?: boolean }>;
+    trapHeightRevert: (guid: string) => Promise<{ success: boolean; message: string }>;
+    trapHeightRevertAll: () => Promise<{ success: boolean; message: string }>;
+    trapHeightModifiedCount: () => Promise<number>;
+    trapHeightModifiedTraps: () => Promise<{ guid: string; name: string; currentHeight: string; desc: string; rarity: string; tier: string }[]>;
+    trapHeightFamilyInfo: () => Promise<Record<string, { key: string; category: string; defaultHeight: { hex: string; uu: number }; insideFloor: { hex: string; uu: number } | null; heightSupported: boolean; heightOffset: number }>>;
+    trapHeightData: () => Promise<{ scale: { blocks: string; hex: string; uu: number }[]; named: { key: string; label: string; hex: string; uu: number }[] }>;
+    fovStatus: () => Promise<{ found: boolean; currentByte: number | null; currentFov: number | null; filePath: string | null; error?: string }>;
+    fovApply: (fovValue: number) => Promise<{ success: boolean; message: string; currentFov?: number }>;
+    fovRestore: () => Promise<{ success: boolean; message: string; currentFov?: number }>;
   };
   dupe: {
-    execute: () => Promise<{ success: boolean; message: string; storageStatus?: string | null }>;
+    execute: () => Promise<{ success: boolean; message: string }>;
     onStatus: (cb: (data: any) => void) => void;
     offStatus: () => void;
   };
@@ -369,16 +422,52 @@ export interface GlowAPI {
       type: 'personal' | 'teammate';
       error?: string;
     }>;
+    bulkPersonal: () => Promise<{
+      success: boolean;
+      totalConsumed: number;
+      accountsProcessed: number;
+      failed: number;
+      error?: string;
+    }>;
   };
   mcp: {
     execute: (operation: string, profileId: string) =>
       Promise<{ success: boolean; data?: any; operation?: string; profileId?: string; error?: string }>;
+  };
+  outpost: {
+    getInfo: () => Promise<{
+      success: boolean;
+      zones: {
+        zoneId: string;
+        zoneName: string;
+        level: number;
+        highestEnduranceWave: number;
+        amplifierCount: number;
+        editPermissions: { accountId: string; displayName: string }[];
+        saveFile: string;
+      }[];
+      error?: string;
+    }>;
+    getBaseData: (saveFile: string) => Promise<{
+      success: boolean;
+      structures: { walls: number; floors: number; stairs: number; cones: number; total: number };
+      traps: { displayName: string; iconFile: string; count: number }[];
+      totalTraps: number;
+      warning?: string;
+      error?: string;
+    }>;
   };
   stalk: {
     search: (searchTerm: string) =>
       Promise<{ success: boolean; results: { accountId: string; displayName: string; platform?: string }[]; error?: string }>;
     matchmaking: (targetInput: string) =>
       Promise<StalkMatchmakingResult>;
+  };
+  lookup: {
+    batch: (accountIds: string[]) =>
+      Promise<{ success: boolean; accounts?: { id: string; displayName: string; externalAuths: Record<string, unknown>; raw: Record<string, unknown> }[]; error?: string }>;
+    search: (searchTerm: string) =>
+      Promise<{ success: boolean; results: { accountId: string; displayName: string; platform?: string }[]; error?: string }>;
   };
   party: {
     info: () => Promise<PartyInfoResult>;
@@ -416,7 +505,8 @@ export interface GlowAPI {
     offDataChanged: () => void;
   };
   taxi: {
-    getAll: () => Promise<{ success: boolean; statuses: TaxiAccountStatus[]; error?: string }>;\n    getAvatars: () => Promise<{ success: boolean; avatars: Record<string, string>; error?: string }>;
+    getAll: () => Promise<{ success: boolean; statuses: TaxiAccountStatus[]; error?: string }>;
+    getAvatars: () => Promise<{ success: boolean; avatars: Record<string, string>; error?: string }>;
     activate: (accountId: string) => Promise<{ success: boolean; error?: string }>;
     deactivate: (accountId: string) => Promise<{ success: boolean; error?: string }>;
     updateConfig: (accountId: string, partial: Partial<TaxiAccountConfig>) => Promise<{ success: boolean }>;
@@ -488,8 +578,45 @@ export interface GlowAPI {
     toggleGifts: (enable: boolean) => Promise<ShopActionResult>;
     getFriends: () => Promise<{ success: boolean; friends: ShopFriend[]; error?: string }>;
     getVbucks: () => Promise<{ success: boolean; total: number; error?: string }>;
+    getOwned: () => Promise<{ success: boolean; ownedIds: string[]; error?: string }>;
     onRotated: (cb: () => void) => void;
     offRotated: () => void;
+  };
+  accountMgmt: {
+    getInfo: () => Promise<{
+      success: boolean;
+      info?: {
+        displayName: string;
+        email: string;
+        emailVerified: boolean;
+        name: string;
+        lastName: string;
+        preferredLanguage: string;
+        phoneNumber: string;
+        company: string;
+        canUpdateDisplayName: boolean;
+        lastDisplayNameChange: string | null;
+        displayNameAvailableAt: string | null;
+      };
+      error?: string;
+    }>;
+    updateField: (field: string, value: string) => Promise<{
+      success: boolean;
+      info?: {
+        displayName: string;
+        email: string;
+        emailVerified: boolean;
+        name: string;
+        lastName: string;
+        preferredLanguage: string;
+        phoneNumber: string;
+        company: string;
+        canUpdateDisplayName: boolean;
+        lastDisplayNameChange: string | null;
+        displayNameAvailableAt: string | null;
+      };
+      error?: string;
+    }>;
   };
   ghostequip: {
     setOutfit: (cosmeticId: string) => Promise<{ success: boolean; message?: string; error?: string }>;
@@ -515,8 +642,289 @@ export interface GlowAPI {
     cancel: (friendId: string) => Promise<{ success: boolean; message?: string; error?: string }>;
     block: (userId: string) => Promise<{ success: boolean; message?: string; error?: string }>;
     removeAll: () => Promise<{ success: boolean; message?: string; removed: number; error?: string }>;
+    clearAll: () => Promise<{ success: boolean; message?: string; error?: string }>;
     acceptAll: () => Promise<{ success: boolean; message?: string; accepted: number; error?: string }>;
   };
+  quests: {
+    getAll: (lang?: string) => Promise<QuestsResult>;
+    reroll: (questId: string) => Promise<{ success: boolean; error?: string }>;
+  };
+  autodaily: {
+    getFullStatus: () => Promise<{ data: AutoDailyData; accounts: { accountId: string; displayName: string; isActive: boolean; lastCollected?: string }[] }>;
+    toggle: (accountId: string, active: boolean) => Promise<AutoDailyData>;
+    runNow: () => Promise<void>;
+    onLog: (cb: (entry: AutoDailyLogEntry) => void) => void;
+    offLog: () => void;
+    onDataChanged: (cb: () => void) => void;
+    offDataChanged: () => void;
+  };
+  autoresponder: {
+    getFullStatus: () => Promise<{
+      enabled: boolean;
+      rules: AutoResponderRule[];
+      interceptedCount: number;
+    }>;
+    setEnabled: (enabled: boolean) => Promise<{ enabled: boolean; port: number; error?: string }>;
+    addRule: (rule: Omit<AutoResponderRule, 'id' | 'createdAt'>) => Promise<AutoResponderRule>;
+    updateRule: (ruleId: string, partial: Partial<Omit<AutoResponderRule, 'id' | 'createdAt'>>) => Promise<AutoResponderRule | null>;
+    deleteRule: (ruleId: string) => Promise<boolean>;
+    toggleRule: (ruleId: string, enabled: boolean) => Promise<boolean>;
+    clearLogs: () => Promise<void>;
+    testPattern: (match: string, pattern: string, testUrl: string) => Promise<{ matches: boolean; error?: string }>;
+    browseFile: () => Promise<string | null>;
+    getTraffic: () => Promise<TrafficEntry[]>;
+    getTrafficEntry: (entryId: number) => Promise<TrafficEntry | null>;
+    clearTraffic: () => Promise<void>;
+    installCert: () => Promise<{ success: boolean; message: string }>;
+    getProxyStatus: () => Promise<{ running: boolean; port: number; certPath: string }>;
+    onTraffic: (cb: (msg: { type: string; entry: TrafficEntry }) => void) => void;
+    offTraffic: () => void;
+  };
+  discordRpc: {
+    setPage: (pageId: string) => Promise<void>;
+    setDetail: (detail: string | null) => Promise<void>;
+    setEnabled: (enabled: boolean) => Promise<void>;
+    getStatus: () => Promise<{ connected: boolean; enabled: boolean }>;
+    onStatus: (cb: (data: { connected: boolean; enabled: boolean }) => void) => void;
+    offStatus: () => void;
+  };
+  notifications: {
+    getAll: () => Promise<any[]>;
+    getUnreadCount: () => Promise<number>;
+    markRead: (id: string) => Promise<void>;
+    markAllRead: () => Promise<void>;
+    clearAll: () => Promise<void>;
+    delete: (id: string) => Promise<void>;
+    getSettings: () => Promise<any>;
+    updateSettings: (partial: any) => Promise<any>;
+    onNew: (cb: (notif: any) => void) => void;
+    offNew: () => void;
+    onUpdated: (cb: (data: { unreadCount: number; total: number }) => void) => void;
+    offUpdated: () => void;
+  };
+  llamas: {
+    get: (accountId: string) => Promise<{
+      success: boolean;
+      llamas?: { templateId: string; name: string; quantity: number; itemIds: string[]; type: 'voucher' | 'cardpack' }[];
+      error?: string;
+    }>;
+    open: (accountId: string, templateId: string, type: string, count: number, itemIds: string[]) => Promise<{
+      success: boolean;
+      opened?: number;
+      error?: string;
+    }>;
+    onLog: (cb: (entry: { level: string; account: string; message: string; timestamp: number }) => void) => void;
+    offLog: () => void;
+  };
+  memory: {
+    getUsage: () => Promise<{ heapUsed: number; heapTotal: number; rss: number }>;
+    cleanup: () => Promise<{ success: boolean }>;
+    restartTimer: () => void;
+  };
+  gifts: {
+    getInfo: () => Promise<{
+      success: boolean;
+      numReceived: number;
+      senders: Array<{
+        accountId: string;
+        displayName: string;
+        lastGiftDate: string | null;
+        cosmetics: Array<{ templateId: string; creationTime: string | null }>;
+      }>;
+      displayName: string;
+      error?: string;
+    }>;
+  };
+  fnlaunch: {
+    getGameSettings: () => Promise<any>;
+    saveGameSettings: (partial: any) => Promise<{ success: boolean; error?: string }>;
+    getLaunchSettings: () => Promise<any>;
+    saveLaunchSettings: (settings: any) => Promise<void>;
+  };
+  library: {
+    getGames: () => Promise<{ success: boolean; games: LibraryGame[]; error?: string }>;
+    getMetadata: (items: Array<{ namespace: string; catalogItemId: string }>) => Promise<{ success: boolean; metadata: Record<string, { title: string; tall: string; wide: string }> }>;
+    launchGame: (namespace: string, catalogItemId: string, appName: string) => Promise<{ success: boolean; error?: string }>;
+    toggleFavorite: (appId: string) => Promise<boolean>;
+  };
+  store: {
+    getFreeGames: () => Promise<{ success: boolean; current: StoreGame[]; upcoming: StoreGame[]; error?: string }>;
+  };
+  updater: {
+    check: () => Promise<{ hasUpdate: boolean; currentVersion: string; release?: { tagName: string; name: string; body: string; htmlUrl: string; publishedAt: string; exeDownloadUrl: string | null; exeFileName: string | null; exeSize: number } }>;
+    downloadAndInstall: (url: string, filename: string) => Promise<{ success: boolean; error?: string; downloadPath?: string }>;
+    openReleases: () => Promise<void>;
+    openRepo: () => Promise<void>;
+    onProgress: (cb: (data: { phase: string; percent: number; downloaded?: number; total?: number }) => void) => void;
+  };
+}
+
+// ============================================================
+// Library types
+// ============================================================
+
+export interface LibraryGame {
+  id: string;
+  namespace: string;
+  catalogItemId: string;
+  title: string;
+  images: { tall: string; wide: string };
+  installed: boolean;
+  installSize: number;
+  installPath: string;
+  favorite: boolean;
+}
+
+// ============================================================
+// Store types
+// ============================================================
+
+export interface StoreGame {
+  id: string;
+  title: string;
+  description: string;
+  seller: string;
+  images: { tall: string; wide: string; thumbnail: string };
+  slug: string;
+  originalPrice: string;
+  currentPrice: string;
+  isFree: boolean;
+  freeUntil: string;
+  url: string;
+}
+
+// ============================================================
+// AutoResponder types
+// ============================================================
+
+export interface AutoResponderRule {
+  id: string;
+  enabled: boolean;
+  match: 'contains' | 'exact' | 'regex';
+  pattern: string;
+  statusCode: number;
+  contentType: string;
+  body: string;
+  responseFile?: string;
+  label: string;
+  createdAt: number;
+}
+
+export interface TrafficEntry {
+  id: number;
+  url: string;
+  method: string;
+  host: string;
+  protocol: string;
+  resourceType: string;
+  statusCode: number;
+  contentType: string;
+  requestHeaders: Record<string, string>;
+  responseHeaders: Record<string, string>;
+  intercepted: boolean;
+  interceptedBy?: string;
+  responseBody?: string;
+  timestamp: number;
+  completed: boolean;
+  error?: string;
+}
+
+// ============================================================
+// Quest types
+// ============================================================
+
+export interface QuestObjective {
+  key: string;
+  current: number;
+  max: number | null;
+}
+
+export interface QuestRewardItem {
+  templateId: string;
+  name: string;
+  quantity: number;
+  icon: string | null;
+}
+
+export interface QuestInfo {
+  itemId: string;
+  templateId: string;
+  questKey: string;
+  category: string;
+  name: string;
+  state: string;
+  objectives: QuestObjective[];
+  canReroll: boolean;
+  image: string | null;
+  rewards: QuestRewardItem[];
+}
+
+export interface QuestsResult {
+  success: boolean;
+  quests?: QuestInfo[];
+  dailyRerolls?: number;
+  error?: string;
+}
+
+// ============================================================
+// Locker Management types
+// ============================================================
+
+export interface LockerEquippedSlot {
+  slotKey: string;
+  itemId: string | null;
+  customizations: any[];
+  schema: string;
+}
+
+export interface LockerOwnedCosmetic {
+  itemId: string;
+  backendType: string;
+  id: string;
+}
+
+export interface LockerCosmeticMeta {
+  name: string;
+  imageUrl: string | null;
+  rarity: string;
+  series: string | null;
+  backendType: string;
+  id: string;
+  itemId: string;
+  color?: string;
+}
+
+export interface LockerResolvedItem {
+  name: string;
+  imageUrl: string | null;
+  rarity: string;
+  series: string | null;
+  color?: string;
+}
+
+export interface LockerSlotCategory {
+  label: string;
+  slots: string[];
+}
+
+// ============================================================
+// AutoDaily types
+// ============================================================
+
+export interface AutoDailyAccountConfig {
+  isActive: boolean;
+  lastCollected?: string;
+}
+
+export interface AutoDailyData {
+  accounts: Record<string, AutoDailyAccountConfig>;
+}
+
+export interface AutoDailyLogEntry {
+  accountId: string;
+  displayName: string;
+  type: 'info' | 'success' | 'warn' | 'error';
+  message: string;
 }
 
 // ============================================================
@@ -538,7 +946,7 @@ export interface TaxiAccountConfig {
   skin: string;
   emote: string;
   level: number;
-  statsMode: 'normal' | 'low';
+  powerLevel: number;
   responsabilityAccepted: boolean;
   autoAcceptFriends: boolean;
 }
@@ -602,6 +1010,12 @@ export interface AlertModifier {
   icon: string;
 }
 
+export interface AlertClaimEntry {
+  missionAlertId: string;
+  redemptionDateUtc: string;
+  evictClaimDataAfterUtc: string;
+}
+
 export interface ProcessedMission {
   id: string;
   theaterId: string;
@@ -616,6 +1030,8 @@ export interface ProcessedMission {
   rewards: AlertRewardItem[];
   modifiers: AlertModifier[];
   hasAlerts: boolean;
+  /** GUIDs from missionAlertGuid — used to match against profile claimData */
+  alertGuids: string[];
 }
 
 export interface ZoneMissions {

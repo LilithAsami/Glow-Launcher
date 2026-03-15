@@ -79,3 +79,25 @@ export async function authenticatedRequest(
     throw err;
   }
 }
+
+/**
+ * Validate tokens for all stored accounts.
+ * Returns an array of { accountId, displayName, valid }.
+ */
+export async function validateAllTokens(
+  storage: Storage,
+): Promise<Array<{ accountId: string; displayName: string; valid: boolean }>> {
+  const raw = (await storage.get<AccountsData>('accounts')) ?? { tosAccepted: false, accounts: [] };
+  const results: Array<{ accountId: string; displayName: string; valid: boolean }> = [];
+
+  for (const account of raw.accounts) {
+    const token = await refreshAccountToken(storage, account.accountId);
+    results.push({
+      accountId: account.accountId,
+      displayName: account.displayName,
+      valid: token !== null,
+    });
+  }
+
+  return results;
+}

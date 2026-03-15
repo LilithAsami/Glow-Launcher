@@ -1,6 +1,6 @@
-import { log } from '../../../../helpers/logger';
-import { Endpoints } from '../../../../helpers/endpoints';
-import { composeMCP } from '../../../../helpers/epic/utils/mcp';
+import { log } from '../../logger';
+import { Endpoints } from '../../../helpers/endpoints';
+import { composeMCP } from '../../../utils/mcp';
 
 export interface CampaignDataResult {
   success: boolean;
@@ -66,7 +66,7 @@ export async function getCampaignData({
   try {
     log.epic.info(`[getCampaignData] [SATELLITE] Consultando perfil de campaña desde Epic Games...`);
 
-    const result = await composeMCP({
+    const rawResponse = await composeMCP({
       profile: 'campaign',
       operation: 'QueryProfile',
       accountId,
@@ -74,27 +74,17 @@ export async function getCampaignData({
       body: {}
     });
 
-    if (!result.success) {
-      log.epic.error({ error: result.error }, '[getCampaignData] [ERROR] Error en MCP QueryProfile');
-      
-      // Si hay error de token, devolver información específica
-      if (result.errorCode === 'errors.com.epicgames.common.authentication.token_verification_failed') {
-        return {
-          success: false,
-          error: result.error,
-          errorCode: 'token_verification_failed',
-        };
-      }
-      
+    // Launcher's composeMCP returns raw API data directly (res.data)
+    const profileChanges = rawResponse?.profileChanges?.[0];
+    const profile = profileChanges?.profile || {};
+
+    if (!profile || Object.keys(profile).length === 0) {
       return {
         success: false,
-        error: result.error,
-        errorCode: result.errorCode || 'mcp_query_failed',
+        error: 'Empty campaign profile returned',
+        errorCode: 'empty_profile',
       };
     }
-
-    const profileChanges = result.data?.profileChanges?.[0];
-    const profile = profileChanges?.profile || {};
 
     log.epic.info(`[getCampaignData] [OK] Datos de campaña obtenidos exitosamente`);
     log.epic.info(`[getCampaignData] [CHART] Items en perfil: ${Object.keys(profile.items || {}).length}`);

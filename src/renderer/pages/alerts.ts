@@ -4,6 +4,7 @@ import type {
   ProcessedMission,
   AlertRewardItem,
 } from '../../shared/types';
+import { copyMissionToClipboard } from '../utils/missionScreenshot';
 
 let el: HTMLElement | null = null;
 let zones: ZoneMissions[] = [];
@@ -11,6 +12,15 @@ let loading = true;
 let error: string | null = null;
 let expandedZones: Set<string> = new Set();
 let expandedMissions: Set<string> = new Set();
+let showBg = false;
+let customBgPath = '';
+let doneAlertIds: Set<string> = new Set();
+
+const alertsBgDiv = () => {
+  if (!showBg) return '';
+  if (customBgPath) return `<div class="alerts-bg" style="background: url('glow-bg://load/${customBgPath.replace(/\\/g, '/')}') center / cover no-repeat, linear-gradient(135deg, #0d0d1a 0%, #1a1030 40%, #0d0d1a 100%)"></div>`;
+  return '<div class="alerts-bg"></div>';
+};
 
 // ─── Data Fetching ───────────────────────────────────────────
 
@@ -23,10 +33,24 @@ async function loadAlerts(): Promise<void> {
     zones = await window.glowAPI.alerts.getMissions();
   } catch (err: any) {
     error = err?.message || 'Failed to load mission alerts';
+    loading = false;
+    draw();
+    return;
   }
 
   loading = false;
   draw();
+
+  // Fetch completed alerts in background (non-blocking)
+  try {
+    const completed = await window.glowAPI.alerts.getCompleted();
+    if (completed?.success && completed.claimData) {
+      doneAlertIds = new Set((completed.claimData as Array<{ missionAlertId: string }>).map((c) => c.missionAlertId));
+      draw();
+    }
+  } catch {
+    // ignore — done indicators are optional
+  }
 }
 
 // ─── Drawing ─────────────────────────────────────────────────
@@ -37,6 +61,7 @@ function draw(): void {
   if (loading) {
     el.innerHTML = `
       <div class="page-alerts">
+        ${alertsBgDiv()}
         <div class="alerts-header">
           <h1 class="page-title">Alerts</h1>
           <p class="page-subtitle">Save the World mission alerts &amp; rewards</p>
@@ -53,6 +78,7 @@ function draw(): void {
   if (error) {
     el.innerHTML = `
       <div class="page-alerts">
+        ${alertsBgDiv()}
         <div class="alerts-header">
           <h1 class="page-title">Alerts</h1>
           <p class="page-subtitle">Save the World mission alerts &amp; rewards</p>
@@ -80,6 +106,7 @@ function draw(): void {
 
   el.innerHTML = `
     <div class="page-alerts">
+      ${alertsBgDiv()}
       <div class="alerts-header">
         <h1 class="page-title">Alerts</h1>
         <p class="page-subtitle">Save the World mission alerts &amp; rewards</p>
@@ -92,10 +119,6 @@ function draw(): void {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
             ${totalAlerts} alerts
           </span>
-          <button class="btn btn-sm btn-accent" id="alerts-refresh" title="Refresh alerts">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
-            Refresh
-          </button>
         </div>
       </div>
       <div class="alerts-zones">
@@ -133,6 +156,11 @@ function renderZone(zoneData: ZoneMissions): string {
 }
 
 // ─── Zone Badge Helper ───────────────────────────────────────
+
+function isMissionDone(m: ProcessedMission): boolean {
+  if (doneAlertIds.size === 0) return false;
+  return m.alertGuids.some((guid) => doneAlertIds.has(guid));
+}
 
 function getZoneBadge(zone: string): string {
   const ZONE_BADGE_MAP: Record<string, { letter: string; cls: string }> = {
@@ -175,9 +203,10 @@ function renderMission(m: ProcessedMission): string {
   const zoneBadge = getZoneBadge(m.zone);
 
   return `
-    <div class="alert-mission ${m.hasAlerts ? 'alert-mission-has' : 'alert-mission-no'}" data-mission-id="${m.id}">
+    <div class="alert-mission ${m.hasAlerts ? 'alert-mission-has' : 'alert-mission-no'}${isMissionDone(m) ? ' alert-mission-done' : ''}" data-mission-id="${m.id}">
       <div class="alert-mission-header" data-mission-toggle="${m.id}">
         <div class="alert-mission-left">
+          ${isMissionDone(m) ? '<span class="mission-done-dot" title="Already completed today"></span>' : ''}
           ${zoneBadge}
           <img src="${m.missionIcon}" alt="" class="alert-mission-icon" onerror="this.style.display='none'">
           <div class="alert-mission-meta">
@@ -194,6 +223,9 @@ function renderMission(m: ProcessedMission): string {
         <div class="alert-mission-right">
           <div class="alert-mod-thumbs">${modIconsHTML}</div>
           ${renderRewardPills([...m.alerts, ...m.rewards])}
+          <button class="mission-copy-btn" data-mission-copy="${m.id}" title="Copy to clipboard">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          </button>
           <svg class="alert-mission-arrow ${isExpanded ? 'alert-mission-arrow-open' : ''}" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
         </div>
       </div>
@@ -205,17 +237,25 @@ function renderMission(m: ProcessedMission): string {
 }
 
 function renderRewardPills(items: AlertRewardItem[]): string {
-  // Only show items that have an icon
   const withIcons = items.filter((r) => r.icon);
   if (withIcons.length === 0) return '';
+  // Aggregate duplicates by icon path, summing quantities
+  const grouped = new Map<string, { r: AlertRewardItem; total: number }>();
+  for (const r of withIcons) {
+    const key = r.icon!;
+    const ex = grouped.get(key);
+    if (ex) ex.total += r.quantity;
+    else grouped.set(key, { r, total: r.quantity });
+  }
+  const merged = [...grouped.values()];
   const maxPills = 6;
-  return `<div class="alert-reward-pills">${withIcons
+  return `<div class="alert-reward-pills">${merged
     .slice(0, maxPills)
-    .map((r) => {
-      const qty = r.quantity > 1 ? `<span class="alert-pill-qty">x${r.quantity}</span>` : '';
-      return `<span class="alert-pill" title="${r.name}${r.quantity > 1 ? ' x' + r.quantity : ''}"><img src="${r.icon}" alt="" class="alert-pill-icon" onerror="this.style.display='none'">${qty}</span>`;
+    .map(({ r, total }) => {
+      const qty = total > 1 ? `<span class="alert-pill-qty">x${total}</span>` : '';
+      return `<span class="alert-pill" title="${r.name}${total > 1 ? ' x' + total : ''}"><img src="${r.icon}" alt="" class="alert-pill-icon" onerror="this.style.display='none'">${qty}</span>`;
     })
-    .join('')}${withIcons.length > maxPills ? `<span class="alert-pill alert-pill-more">+${withIcons.length - maxPills}</span>` : ''}</div>`;
+    .join('')}${merged.length > maxPills ? `<span class="alert-pill alert-pill-more">+${merged.length - maxPills}</span>` : ''}</div>`;
 }
 
 function renderMissionDetails(m: ProcessedMission): string {
@@ -286,13 +326,6 @@ function renderRewardRow(item: AlertRewardItem, type: string): string {
 // ─── Events ──────────────────────────────────────────────────
 
 function bindEvents(): void {
-  // Refresh button
-  el?.querySelector('#alerts-refresh')?.addEventListener('click', () => {
-    expandedZones.clear();
-    expandedMissions.clear();
-    loadAlerts();
-  });
-
   // Zone toggles — manipulate DOM directly to preserve scroll position
   el?.querySelectorAll('[data-zone-toggle]').forEach((header) => {
     header.addEventListener('click', () => {
@@ -339,6 +372,25 @@ function bindEvents(): void {
     });
   });
 
+  // Mission copy-to-clipboard buttons
+  el?.querySelectorAll<HTMLButtonElement>('[data-mission-copy]').forEach((btn) => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const mid = btn.dataset.missionCopy!;
+      const m = zones.flatMap((z) => z.missions).find((x) => x.id === mid);
+      if (!m) return;
+      const prev = btn.innerHTML;
+      btn.disabled = true;
+      try {
+        await copyMissionToClipboard(m);
+        btn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>';
+        setTimeout(() => { btn.innerHTML = prev; btn.disabled = false; }, 1600);
+      } catch {
+        btn.disabled = false;
+      }
+    });
+  });
+
   // Refresh data on account change
   window.glowAPI.accounts.onDataChanged(() => {
     expandedZones.clear();
@@ -352,13 +404,7 @@ function bindEvents(): void {
 export const alertsPage: PageDefinition = {
   id: 'alerts',
   label: 'Alerts',
-  icon: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none"
-          stroke="currentColor" stroke-width="2" stroke-linecap="round"
-          stroke-linejoin="round">
-          <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
-          <line x1="12" y1="9" x2="12" y2="13"/>
-          <line x1="12" y1="17" x2="12.01" y2="17"/>
-        </svg>`,
+  icon: `<img src="assets/icons/fnui/BR-STW/stworld.png" alt="Alerts" width="18" height="18" style="object-fit:contain;vertical-align:middle" />`,
   order: 15,
 
   async render(container: HTMLElement): Promise<void> {
@@ -368,6 +414,9 @@ export const alertsPage: PageDefinition = {
     error = null;
     expandedZones = new Set();
     expandedMissions = new Set();
+    const s = await window.glowAPI.storage.get<{ pageBackgrounds?: boolean; customBackgrounds?: Record<string, string> }>('settings');
+    showBg = s?.pageBackgrounds ?? false;
+    customBgPath = s?.customBackgrounds?.alerts || '';
     await loadAlerts();
   },
 

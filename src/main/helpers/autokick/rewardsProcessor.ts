@@ -1,88 +1,9 @@
 /**
  * AutoKick STW Rewards Processor
- * Procesa todas las recompensas de STW siguiendo el flujo del bot
- */
-
-import { composeMCP } from '../../utils/mcp';
-
-export interface RewardData {
-  name: string;
-  quantity: number;
-}
-
-/**
- * Compara perfiles (antes/después) para detectar nuevos items
- */
-function compararPerfiles(
-  itemsAntes: Record<string, any>,
-  itemsDespues: Record<string, any>,
-  displayName: string
-): Record<string, RewardData> {
-  const rewards: Record<string, RewardData> = {};
-
-  for (const [guid, itemData] of Object.entries(itemsDespues)) {
-    const templateId = itemData?.templateId || '';
-    const quantityAfter = itemData?.quantity || 1;
-
-    if (!esItemRecompensa(templateId)) continue;
-
-    const itemBefore = itemsAntes[guid];
-    const quantityBefore = itemBefore?.quantity || 0;
-
-    // Solo contar items nuevos o incrementados
-    const diff = quantityAfter - quantityBefore;
-    if (diff > 0) {
-      // Usar templateId como nombre simple
-      const name = templateId;
-
-      if (rewards[name]) {
-        rewards[name].quantity += diff;
-      } else {
-        rewards[name] = { name, quantity: diff };
-      }
-    }
-  }
-
-  return rewards;
-}
-
-/**
- * Verifica si un templateId es un item de recompensa
- */
-function esItemRecompensa(templateId: string): boolean {
-  if (!templateId) return false;
-  
-  const includeTypes = [
-    'AccountResource:',
-    'CardPack:',
-    'Quest:',
-    'Hero:',
-    'Schematic:',
-    'Worker:',
-    'Defender:',
-    'Currency:',
-    'TeamPerk:',
-    'Token:',
-    'Alteration:',
-  ];
-
-  const excludeTypes = [
-    'Quest:outpostquest',
-    'Quest:homebasequest',
-  ];
-
-  if (excludeTypes.some(e => templateId.toLowerCase().includes(e.toLowerCase()))) {
-    return false;
-  }
-
-  return includeTypes.some(i => templateId.startsWith(i));
-}
-
-/**
- * Procesa todas las recompensas de STW siguiendo el flujo EXACTO del bot
- * FLUJO (TODO EN PARALELO):
+ *
+ * Procesa todas las recompensas de STW siguiendo el flujo EXACTO del bot:
  * 1. QueryProfile ANTES
- * 2. Detectar cofres válidos y quests completadas
+ * 2. Detectar cofres válidos (match_statistics o pack_source=ItemCache, excl _choice_) y quests completadas
  * 3. PARALELO:
  *    - OpenCardPackBatch (en batches de 10)
  *    - ClaimQuestReward (todas en paralelo)
@@ -91,15 +12,95 @@ function esItemRecompensa(templateId: string): boolean {
  *    - ClaimCollectionBookRewards
  *    - ClaimEventRewards
  * 4. QueryProfile DESPUÉS
- * 5. Comparar perfiles
+ * 5. Comparar perfiles → items con nombre traducido, icono y cantidad
  */
+
+import { composeMCP } from '../../utils/mcp';
+import { traducir, getResourceIcon } from '../stw/alerts';
+
+// ── Types ────────────────────────────────────────────────────
+
+export interface RewardData {
+  name: string;
+  quantity: number;
+  icon: string | null;
+  itemType: string;
+}
+
+// ── Item filters ─────────────────────────────────────────────
+
+const REWARD_PREFIXES = [
+  'AccountResource:',
+  'Hero:',
+  'Schematic:',
+  'Worker:',
+  'Defender:',
+  'Currency:',
+  'TeamPerk:',
+  'Token:',
+  'Alteration:',
+  'CardPack:',
+  'CollectedResource:',
+];
+
+const EXCLUDE_PATTERNS = [
+  'quest:outpostquest',
+  'quest:homebasequest',
+];
+
+function esItemRecompensa(templateId: string): boolean {
+  if (!templateId) return false;
+  const lower = templateId.toLowerCase();
+  if (EXCLUDE_PATTERNS.some((e) => lower.includes(e))) return false;
+  return REWARD_PREFIXES.some((p) => templateId.startsWith(p));
+}
+
+// ── Profile comparison ───────────────────────────────────────
+
+function compararPerfiles(
+  itemsBefore: Record<string, any>,
+  itemsAfter: Record<string, any>,
+): Record<string, RewardData> {
+  const rewards: Record<string, RewardData> = {};
+
+  for (const [guid, itemAfter] of Object.entries(itemsAfter)) {
+    const templateId: string = itemAfter?.templateId || '';
+    if (!esItemRecompensa(templateId)) continue;
+
+    const qtyAfter: number = itemAfter?.quantity ?? 1;
+    const itemBefore = itemsBefore[guid];
+    const qtyBefore: number = itemBefore?.quantity ?? 0;
+
+    // Only count if existed before AND quantity increased, OR brand new guid
+    if (itemBefore && qtyAfter <= qtyBefore) continue;
+
+    const diff = itemBefore ? qtyAfter - qtyBefore : qtyAfter;
+    if (diff <= 0) continue;
+
+    const name = traducir(templateId);
+    const icon = getResourceIcon(templateId, name);
+
+    if (rewards[templateId]) {
+      rewards[templateId].quantity += diff;
+    } else {
+      rewards[templateId] = { name, quantity: diff, icon, itemType: templateId };
+    }
+  }
+
+  return rewards;
+}
+
+// ── Main export ──────────────────────────────────────────────
+
 export async function processSTWRewards(
   accountId: string,
   accessToken: string,
-  displayName: string
+  displayName: string,
 ): Promise<Record<string, RewardData>> {
   try {
-    // 1. Query profile ANTES
+    // ────────────────────────────────────────────────────────
+    // 1. QueryProfile ANTES
+    // ────────────────────────────────────────────────────────
     const profileBefore = await composeMCP({
       profile: 'campaign',
       operation: 'QueryProfile',
@@ -107,36 +108,48 @@ export async function processSTWRewards(
       accessToken,
     });
 
-    const itemsBefore = profileBefore.profileChanges?.[0]?.profile?.items || {};
+    const itemsBefore: Record<string, any> =
+      profileBefore.profileChanges?.[0]?.profile?.items ?? {};
 
-    // 2. Detectar cofres y quests
+    // ────────────────────────────────────────────────────────
+    // 2. Detectar cofres válidos y quests completadas
+    // ────────────────────────────────────────────────────────
     const validCardPacks: string[] = [];
     const completedQuests: string[] = [];
 
     for (const [guid, item] of Object.entries<any>(itemsBefore)) {
-      const templateId = item?.templateId || '';
+      const templateId: string = item?.templateId ?? '';
+      const attrs = item?.attributes ?? {};
 
-      // Cofres válidos
-      if (templateId.startsWith('CardPack:') && !templateId.toLowerCase().includes('voucher')) {
-        validCardPacks.push(guid);
+      // ── Filtrar items _choice_ (no se deben abrir) ──
+      if (templateId.includes('_choice_')) continue;
+
+      // ── CardPacks: SOLO abrir si tienen match_statistics o pack_source=ItemCache ──
+      if (templateId.startsWith('CardPack:')) {
+        const hasMatchStats = attrs.match_statistics !== undefined;
+        const isItemCache = attrs.pack_source === 'ItemCache';
+        if (hasMatchStats || isItemCache) {
+          validCardPacks.push(guid);
+        }
+        continue;
       }
 
-      // Quests completadas (quest_pool)
-      if (templateId.startsWith('Quest:') && templateId.toLowerCase().includes('quest_pool')) {
-        const questState = item?.attributes?.quest_state || '';
-        if (questState.toLowerCase() === 'claimed') {
-          completedQuests.push(guid);
-        }
+      // ── Quests completadas (state === 'Completed', NO 'Claimed') ──
+      if (templateId.startsWith('Quest:') && attrs.quest_state === 'Completed') {
+        completedQuests.push(guid);
       }
     }
 
-    // 3. Ejecutar operaciones en paralelo
+    // ────────────────────────────────────────────────────────
+    // 3. Ejecutar TODAS las operaciones en paralelo
+    // ────────────────────────────────────────────────────────
     const operations: Promise<any>[] = [];
 
-    // OpenCardPackBatch en batches de 10
+    // 3a. OpenCardPackBatch — en batches de 10 (exacto como el bot)
     if (validCardPacks.length > 0) {
-      for (let i = 0; i < validCardPacks.length; i += 10) {
-        const batch = validCardPacks.slice(i, i + 10);
+      const BATCH_SIZE = 10;
+      for (let i = 0; i < validCardPacks.length; i += BATCH_SIZE) {
+        const batch = validCardPacks.slice(i, i + BATCH_SIZE);
         operations.push(
           composeMCP({
             profile: 'campaign',
@@ -144,12 +157,12 @@ export async function processSTWRewards(
             accountId,
             accessToken,
             body: { cardPackItemIds: batch },
-          }).catch(() => null)
+          }).catch(() => null),
         );
       }
     }
 
-    // ClaimQuestReward (todas en paralelo)
+    // 3b. ClaimQuestReward — TODAS en paralelo
     for (const questId of completedQuests) {
       operations.push(
         composeMCP({
@@ -157,59 +170,35 @@ export async function processSTWRewards(
           operation: 'ClaimQuestReward',
           accountId,
           accessToken,
-          body: {
-            questId,
-            selectedRewards: [],
-            newQuestsData: {},
-            questDefinition: '',
-          },
-        }).catch(() => null)
+          body: { questId, selectedRewards: [], newQuestsData: {}, questDefinition: '' },
+        }).catch(() => null),
       );
     }
 
-    // ClaimDifficultyIncreaseRewards
-    operations.push(
-      composeMCP({
-        profile: 'campaign',
-        operation: 'ClaimDifficultyIncreaseRewards',
-        accountId,
-        accessToken,
-      }).catch(() => null)
-    );
+    // 3c. Los 4 MCPs adicionales — TAMBIÉN en paralelo
+    const claimOps = [
+      'ClaimDifficultyIncreaseRewards',
+      'ClaimMissionAlertRewards',
+      'ClaimCollectionBookRewards',
+      'ClaimEventRewards',
+    ];
+    for (const op of claimOps) {
+      operations.push(
+        composeMCP({
+          profile: 'campaign',
+          operation: op,
+          accountId,
+          accessToken,
+        }).catch(() => null),
+      );
+    }
 
-    // ClaimMissionAlertRewards
-    operations.push(
-      composeMCP({
-        profile: 'campaign',
-        operation: 'ClaimMissionAlertRewards',
-        accountId,
-        accessToken,
-      }).catch(() => null)
-    );
+    // Ejecutar todo en paralelo
+    await Promise.allSettled(operations);
 
-    // ClaimCollectionBookRewards
-    operations.push(
-      composeMCP({
-        profile: 'campaign',
-        operation: 'ClaimCollectionBookRewards',
-        accountId,
-        accessToken,
-      }).catch(() => null)
-    );
-
-    // ClaimEventRewards (si aplica)
-    operations.push(
-      composeMCP({
-        profile: 'campaign',
-        operation: 'ClaimEventRewards',
-        accountId,
-        accessToken,
-      }).catch(() => null)
-    );
-
-    await Promise.all(operations);
-
-    // 4. Query profile DESPUÉS
+    // ────────────────────────────────────────────────────────
+    // 4. QueryProfile DESPUÉS
+    // ────────────────────────────────────────────────────────
     const profileAfter = await composeMCP({
       profile: 'campaign',
       operation: 'QueryProfile',
@@ -217,13 +206,15 @@ export async function processSTWRewards(
       accessToken,
     });
 
-    const itemsAfter = profileAfter.profileChanges?.[0]?.profile?.items || {};
+    const itemsAfter: Record<string, any> =
+      profileAfter.profileChanges?.[0]?.profile?.items ?? {};
 
+    // ────────────────────────────────────────────────────────
     // 5. Comparar perfiles
-    const rewards = compararPerfiles(itemsBefore, itemsAfter, displayName);
-
-    return rewards;
+    // ────────────────────────────────────────────────────────
+    return compararPerfiles(itemsBefore, itemsAfter);
   } catch (error: any) {
-    throw error;
+    console.error(`[RewardsProcessor] ${displayName} error:`, error?.message);
+    return {};
   }
 }

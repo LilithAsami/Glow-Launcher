@@ -11,6 +11,12 @@ let el: HTMLElement | null = null;
 let statusList: StatusConnectionInfo[] = [];
 let loading = false;
 
+// ─── Bulk copy state ─────────────────────────────────────────
+let stBulkOpen = false;
+let stBulkSourceId = '';
+let stBulkTargets: Set<string> = new Set();
+let stBulkApplying = false;
+
 const PLATFORMS = [
   { name: 'Android', value: 'AND' },
   { name: 'Windows', value: 'WIN' },
@@ -75,16 +81,84 @@ function draw(): void {
 
   el.innerHTML = `
     <div class="status-page">
-      <h1 class="page-title">Status</h1>
-      <p class="page-subtitle">Manage Fortnite XMPP presence status for your accounts</p>
+      <div class="page-header-row">
+        <div>
+          <h1 class="page-title">Status</h1>
+          <p class="page-subtitle">Manage Fortnite XMPP presence status for your accounts</p>
+        </div>
+        <button class="bulk-copy-btn" id="st-bulk-open" ${statusList.length < 2 ? 'disabled' : ''} title="Copy status settings from one account to others">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          Copy to All
+        </button>
+      </div>
 
       <div class="status-grid">
         ${statusList.map((s) => renderAccountCard(s)).join('')}
       </div>
+      ${stBulkOpen ? renderStBulkModal() : ''}
     </div>
   `;
 
   bindEvents();
+}
+
+function renderStBulkModal(): string {
+  const srcOpts = statusList
+    .map((s) => `<option value="${s.accountId}" ${s.accountId === stBulkSourceId ? 'selected' : ''}>${escapeHtml(s.displayName)}</option>`)
+    .join('');
+  const src = statusList.find((s) => s.accountId === stBulkSourceId);
+  const targets = statusList
+    .map((s) => {
+      const isSrc = s.accountId === stBulkSourceId;
+      const checked = !isSrc && stBulkTargets.has(s.accountId);
+      return `
+        <label class="bulk-target-item${isSrc ? ' bulk-target-source' : ''}">
+          <input type="checkbox" class="bulk-target-check" data-target-id="${s.accountId}" ${checked ? 'checked' : ''} ${isSrc ? 'disabled' : ''}>
+          <span>${escapeHtml(s.displayName)}</span>
+          ${isSrc ? `<span class="bulk-source-label">[${s.plataforma || 'AND'}]</span>` : ''}
+        </label>`;
+    })
+    .join('');
+  const count = stBulkTargets.size;
+  return `
+    <div class="bulk-modal-overlay" id="st-bulk-overlay">
+      <div class="bulk-modal">
+        <div class="bulk-modal-header">
+          <h4>Copy Status Settings</h4>
+          <button class="bulk-modal-close" id="st-bulk-close">&times;</button>
+        </div>
+        <div class="bulk-modal-body">
+          <div class="bulk-field">
+            <label class="bulk-label">Copy settings from</label>
+            <select class="bulk-source-select" id="st-bulk-source">${srcOpts}</select>
+          </div>
+          ${src ? `<div class="bulk-field">
+            <label class="bulk-label">Settings to apply</label>
+            <div style="font-size:12px;color:var(--text-secondary,#aaa);background:rgba(255,255,255,0.04);border-radius:6px;padding:8px 10px;line-height:1.7">
+              Message: <b style="color:var(--text-primary,#fff)">${escapeHtml(src.mensaje || '(empty)')}</b><br>
+              Platform: <b style="color:var(--text-primary,#fff)">${src.plataforma || 'AND'}</b><br>
+              Presence: <b style="color:var(--text-primary,#fff)">${src.presenceMode || 'online'}</b>
+            </div>
+          </div>` : ''}
+          <div class="bulk-field">
+            <div class="bulk-targets-header">
+              <label class="bulk-label">Apply to</label>
+              <div class="bulk-targets-actions">
+                <button class="bulk-sel-all" id="st-sel-all">All</button>
+                <button class="bulk-sel-none" id="st-sel-none">None</button>
+              </div>
+            </div>
+            <div class="bulk-targets-list">${targets}</div>
+          </div>
+        </div>
+        <div class="bulk-modal-footer">
+          <button class="bulk-cancel" id="st-bulk-cancel">Cancel</button>
+          <button class="bulk-apply" id="st-bulk-apply" ${!stBulkSourceId || count === 0 || stBulkApplying ? 'disabled' : ''}>
+            ${stBulkApplying ? '⏳ Applying...' : `Apply to ${count} account${count !== 1 ? 's' : ''}`}
+          </button>
+        </div>
+      </div>
+    </div>`;
 }
 
 function renderAccountCard(s: StatusConnectionInfo): string {
@@ -233,6 +307,66 @@ function bindEvents(): void {
       }
     });
   });
+
+  // ── Bulk copy ──────────────────────────────────────────────
+  el.querySelector('#st-bulk-open')?.addEventListener('click', () => {
+    stBulkSourceId = statusList[0]?.accountId ?? '';
+    stBulkTargets = new Set(statusList.filter((s) => s.accountId !== stBulkSourceId).map((s) => s.accountId));
+    stBulkOpen = true;
+    draw();
+  });
+
+  if (stBulkOpen) {
+    const closeBulk = () => { stBulkOpen = false; draw(); };
+    el.querySelector('#st-bulk-close')?.addEventListener('click', closeBulk);
+    el.querySelector('#st-bulk-cancel')?.addEventListener('click', closeBulk);
+    el.querySelector('#st-bulk-overlay')?.addEventListener('click', (e) => {
+      if ((e.target as HTMLElement).id === 'st-bulk-overlay') closeBulk();
+    });
+    el.querySelector<HTMLSelectElement>('#st-bulk-source')?.addEventListener('change', (e) => {
+      stBulkSourceId = (e.target as HTMLSelectElement).value;
+      stBulkTargets = new Set(statusList.filter((s) => s.accountId !== stBulkSourceId).map((s) => s.accountId));
+      draw();
+    });
+    el.querySelector('#st-sel-all')?.addEventListener('click', () => {
+      stBulkTargets = new Set(statusList.filter((s) => s.accountId !== stBulkSourceId).map((s) => s.accountId));
+      draw();
+    });
+    el.querySelector('#st-sel-none')?.addEventListener('click', () => {
+      stBulkTargets = new Set();
+      draw();
+    });
+    el.querySelectorAll<HTMLInputElement>('.bulk-target-check').forEach((cb) => {
+      cb.addEventListener('change', () => {
+        const id = cb.dataset.targetId!;
+        if (cb.checked) stBulkTargets.add(id);
+        else stBulkTargets.delete(id);
+        const applyBtn = el?.querySelector<HTMLButtonElement>('#st-bulk-apply');
+        if (applyBtn) {
+          const c = stBulkTargets.size;
+          applyBtn.textContent = `Apply to ${c} account${c !== 1 ? 's' : ''}`;
+          applyBtn.disabled = c === 0 || stBulkApplying;
+        }
+      });
+    });
+    el.querySelector('#st-bulk-apply')?.addEventListener('click', async () => {
+      if (stBulkApplying || !stBulkSourceId || stBulkTargets.size === 0) return;
+      const src = statusList.find((s) => s.accountId === stBulkSourceId);
+      if (!src) return;
+      const { mensaje, plataforma, presenceMode } = src;
+      stBulkApplying = true;
+      draw();
+      for (const targetId of stBulkTargets) {
+        try {
+          await window.glowAPI.status.activate(targetId, mensaje || '', plataforma || 'AND', presenceMode || 'online');
+        } catch {}
+      }
+      stBulkApplying = false;
+      stBulkOpen = false;
+      setTimeout(() => fetchStatuses(), 1500);
+      draw();
+    });
+  }
 }
 
 function showError(accountId: string, message: string): void {
@@ -267,7 +401,7 @@ function escapeAttr(str: string): string {
 export const statusPage: PageDefinition = {
   id: 'status',
   label: 'Status',
-  icon: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 0 1-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>`,
+  icon: `<img src="assets/icons/fnui/Automated/custom-status.png" alt="Status" width="18" height="18" style="object-fit:contain;vertical-align:middle" />`,
   order: 24,
   render(container) {
     el = container;
@@ -281,6 +415,8 @@ export const statusPage: PageDefinition = {
         statusList[idx].isConnected = data.connected;
         if (data.error) statusList[idx].error = data.error;
         else delete statusList[idx].error;
+        const connected = statusList.filter((s) => s.isConnected).length;
+        window.glowAPI.discordRpc.setDetail(connected > 0 ? `${connected} status${connected !== 1 ? 'es' : ''} active` : null);
         draw();
       }
     });

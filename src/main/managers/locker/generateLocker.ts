@@ -54,12 +54,30 @@ const TYPE_MAPPING: Record<string, TypeMapping> = {
   wrap: { prefix: 'AthenaItemWrap:', backendValue: 'AthenaItemWrap' },
   music: { prefix: 'AthenaMusicPack:', backendValue: 'AthenaMusicPack' },
   loadingscreen: { prefix: 'AthenaLoadingScreen:', backendValue: 'AthenaLoadingScreen' },
-  contrail: { prefix: 'AthenaSkyDiveContrail:', backendValue: 'AthenaSkyDiveContrail' }
+  contrail: { prefix: 'AthenaSkyDiveContrail:', backendValue: 'AthenaSkyDiveContrail' },
+  track: { prefix: 'SparksSong:', backendValue: 'SparksSong' },
+  banner: { prefix: 'HomebaseBannerIcon:', backendValue: 'HomebaseBannerIcon' },
+  guitar: { prefix: 'SparksGuitar:', backendValue: 'SparksGuitar' },
+  bass: { prefix: 'SparksBass:', backendValue: 'SparksBass' },
+  drum: { prefix: 'SparksDrums:', backendValue: 'SparksDrums' },
+  keyboard: { prefix: 'SparksKeyboard:', backendValue: 'SparksKeyboard' },
+  microphone: { prefix: 'SparksMicrophone:', backendValue: 'SparksMicrophone' },
+  vehicleBody:  { prefix: 'VehicleCosmetics_Body:', backendValue: 'VehicleCosmetics_Body' },
+  vehicleSkin:  { prefix: 'VehicleCosmetics_Skin:', backendValue: 'VehicleCosmetics_Skin' },
+  vehicleWheel: { prefix: 'VehicleCosmetics_Wheel:', backendValue: 'VehicleCosmetics_Wheel' },
+  vehicleDrift: { prefix: 'VehicleCosmetics_DriftTrail:', backendValue: 'VehicleCosmetics_DriftTrail' },
+  vehicleBoost: { prefix: 'VehicleCosmetics_Booster:', backendValue: 'VehicleCosmetics_Booster' },
+  companion:    { prefix: 'CosmeticMimosa:', backendValue: 'CosmeticMimosa' },
 };
 
-const TYPE_ORDER = ['outfit', 'backpack', 'pickaxe', 'glider', 'emote', 'spray', 'emoticon', 'toy', 'wrap', 'music', 'loadingscreen', 'contrail'];
+const TYPE_ORDER = ['outfit', 'backpack', 'pickaxe', 'glider', 'emote', 'spray', 'emoticon', 'toy', 'wrap', 'music', 'loadingscreen', 'contrail', 'track', 'banner', 'guitar', 'bass', 'drum', 'keyboard', 'microphone', 'vehicleBody', 'vehicleSkin', 'vehicleWheel', 'vehicleDrift', 'vehicleBoost', 'companion'];
 const EID_TYPES = new Set(['emote', 'spray', 'emoticon', 'toy']);
 const VALID_EID_VALUES = new Set(['AthenaDance', 'AthenaSpray', 'AthenaEmoji', 'AthenaToy']);
+// Types that need lookup in specialized APIs (not BR API)
+const TRACK_TYPES = new Set(['track']);
+const BANNER_TYPES = new Set(['banner']);
+const INSTRUMENT_TYPES = new Set(['guitar', 'bass', 'drum', 'keyboard', 'microphone']);
+const VEHICLE_TYPES = new Set(['vehicleBody', 'vehicleSkin', 'vehicleWheel', 'vehicleDrift', 'vehicleBoost']);
 
 // Pre-calcular pesos de rareza
 const RARITY_WEIGHTS: Record<string, number> = {
@@ -214,6 +232,16 @@ export async function countUserCosmetics(accountId: string, accessToken: string,
 }
 
 async function getUserCosmetics(accountId: string, accessToken: string, cosmeticTypes: string | string[]): Promise<UserCosmetic[]> {
+  // Normalizar a array and expand composite filter types
+  let typesArray = Array.isArray(cosmeticTypes) ? [...cosmeticTypes] : [cosmeticTypes];
+  if (typesArray.includes('vehicle')) {
+    typesArray = typesArray.filter(t => t !== 'vehicle');
+    typesArray.push('vehicleBody', 'vehicleSkin', 'vehicleWheel', 'vehicleDrift', 'vehicleBoost');
+  }
+  const isAll = typesArray.includes('all');
+  const needsBanners = isAll || typesArray.includes('banner');
+
+  // 1. Athena profile — skins, emotes, wraps, music, loadingscreens, instruments, tracks, etc.
   const profileData = await composeMCP({
     profile: "athena",
     operation: "QueryProfile",
@@ -224,59 +252,97 @@ async function getUserCosmetics(accountId: string, accessToken: string, cosmetic
   });
 
   const items = profileData?.profileChanges?.[0]?.profile?.items;
-  if (!items) return [];
-
-  // Normalizar a array
-  const typesArray = Array.isArray(cosmeticTypes) ? cosmeticTypes : [cosmeticTypes];
-  const isAll = typesArray.includes('all');
-
   const cosmetics: UserCosmetic[] = [];
 
-  for (const itemData of Object.values(items)) {
-    const templateId = (itemData as any).templateId;
-    if (!templateId) continue;
+  const processItems = (itemEntries: any) => {
+    if (!itemEntries) return;
+    for (const itemData of Object.values(itemEntries)) {
+      const templateId = (itemData as any).templateId;
+      if (!templateId) continue;
 
-    if (isAll) {
-      // Obtener todos los tipos
-      for (const [type, map] of Object.entries(TYPE_MAPPING)) {
-        if (templateId.startsWith(map.prefix)) {
-          cosmetics.push({
-            id: templateId.slice(map.prefix.length),
-            templateId,
-            type: EID_TYPES.has(type) ? 'eid_generic' : type,
-            originalType: type,
-            backendValue: map.backendValue
-          });
-          break;
+      if (isAll) {
+        for (const [type, map] of Object.entries(TYPE_MAPPING)) {
+          if (templateId.startsWith(map.prefix)) {
+            cosmetics.push({
+              id: templateId.slice(map.prefix.length),
+              templateId,
+              type: EID_TYPES.has(type) ? 'eid_generic' : type,
+              originalType: type,
+              backendValue: map.backendValue
+            });
+            break;
+          }
         }
-      }
-    } else {
-      // Filtrar por tipos seleccionados
-      for (const cosmeticType of typesArray) {
-        const mapping = TYPE_MAPPING[cosmeticType];
-        if (!mapping) continue;
-        
-        const isEidType = EID_TYPES.has(cosmeticType);
-        const prefix = isEidType ? 'AthenaDance:' : mapping.prefix;
-        
-        if (templateId.startsWith(prefix)) {
-          cosmetics.push({
-            id: templateId.slice(prefix.length),
-            templateId,
-            type: cosmeticType,
-            backendValue: mapping.backendValue,
-            needsValidation: isEidType
-          });
-          break;
+      } else {
+        for (const cosmeticType of typesArray) {
+          const mapping = TYPE_MAPPING[cosmeticType];
+          if (!mapping) continue;
+          
+          const isEidType = EID_TYPES.has(cosmeticType);
+          const prefix = isEidType ? 'AthenaDance:' : mapping.prefix;
+          
+          if (templateId.startsWith(prefix)) {
+            cosmetics.push({
+              id: templateId.slice(prefix.length),
+              templateId,
+              type: cosmeticType,
+              backendValue: mapping.backendValue,
+              needsValidation: isEidType
+            });
+            break;
+          }
         }
       }
     }
+  };
+
+  processItems(items);
+
+  // 2. Common_core profile — banners (HomebaseBannerIcon)
+  if (needsBanners) {
+    try {
+      const ccData = await composeMCP({
+        profile: "common_core",
+        operation: "QueryProfile",
+        body: {},
+        accountId,
+        accessToken,
+        route: 'client'
+      });
+      const ccItems = ccData?.profileChanges?.[0]?.profile?.items;
+      if (ccItems) {
+        for (const itemData of Object.values(ccItems)) {
+          const templateId = (itemData as any).templateId;
+          if (!templateId) continue;
+          // Only pick banner icons from common_core
+          if (templateId.startsWith('HomebaseBannerIcon:')) {
+            const mapping = TYPE_MAPPING['banner'];
+            cosmetics.push({
+              id: templateId.slice(mapping.prefix.length),
+              templateId,
+              type: 'banner',
+              backendValue: mapping.backendValue
+            });
+          }
+        }
+      }
+    } catch { /* banner fetch is non-critical */ }
   }
+
   return cosmetics;
 }
 
 // Búsqueda optimizada con Map indexado
 let apiCosmeticsMap: Map<string, any> | null = null;
+// Additional API caches for specialized cosmetic types
+let apiTracksMap: Map<string, any> | null = null;
+let apiBannersMap: Map<string, any> | null = null;
+let apiInstrumentsMap: Map<string, any> | null = null;
+let apiCarsMap: Map<string, any> | null = null;
+let apiTracksCacheTS = 0;
+let apiBannersCacheTS = 0;
+let apiInstrumentsCacheTS = 0;
+let apiCarsCacheTS = 0;
 
 function buildApiMap(apiCosmetics: any[]): Map<string, any> {
   const map = new Map();
@@ -309,9 +375,116 @@ async function getApiCosmetics(): Promise<any[]> {
   return cosmetics;
 }
 
+async function getApiTracks(): Promise<Map<string, any>> {
+  const now = Date.now();
+  if (apiTracksMap && (now - apiTracksCacheTS) < API_CACHE_TTL) return apiTracksMap;
+  try {
+    const res = await axiosInstance.get("https://fortnite-api.com/v2/cosmetics/tracks", { params: { language: 'en' } });
+    const tracks: any[] = res.data?.data || [];
+    const map = new Map<string, any>();
+    for (const t of tracks) {
+      if (!t?.id) continue;
+      map.set(t.id.toLowerCase(), t);
+      if (t.devName) map.set(t.devName.toLowerCase(), t);
+    }
+    apiTracksMap = map;
+    apiTracksCacheTS = now;
+    log(`[TRACKS CACHE] ${tracks.length} tracks cached`);
+  } catch { apiTracksMap = apiTracksMap || new Map(); }
+  return apiTracksMap!;
+}
+
+async function getApiBanners(): Promise<Map<string, any>> {
+  const now = Date.now();
+  if (apiBannersMap && (now - apiBannersCacheTS) < API_CACHE_TTL) return apiBannersMap;
+  try {
+    const res = await axiosInstance.get("https://fortnite-api.com/v1/banners", { params: { language: 'en' } });
+    const banners: any[] = res.data?.data || [];
+    const map = new Map<string, any>();
+    for (const b of banners) {
+      if (b?.id) map.set(b.id.toLowerCase(), b);
+    }
+    apiBannersMap = map;
+    apiBannersCacheTS = now;
+    log(`[BANNERS CACHE] ${banners.length} banners cached`);
+  } catch { apiBannersMap = apiBannersMap || new Map(); }
+  return apiBannersMap!;
+}
+
+async function getApiInstruments(): Promise<Map<string, any>> {
+  const now = Date.now();
+  if (apiInstrumentsMap && (now - apiInstrumentsCacheTS) < API_CACHE_TTL) return apiInstrumentsMap;
+  try {
+    const res = await axiosInstance.get("https://fortnite-api.com/v2/cosmetics/instruments", { params: { language: 'en' } });
+    const instruments: any[] = res.data?.data || [];
+    const map = new Map<string, any>();
+    for (const inst of instruments) {
+      if (!inst?.id) continue;
+      const apiId = inst.id.toLowerCase();
+      map.set(apiId, inst);
+      const colonIdx = apiId.indexOf(':');
+      if (colonIdx >= 0) map.set(apiId.slice(colonIdx + 1), inst);
+    }
+    apiInstrumentsMap = map;
+    apiInstrumentsCacheTS = now;
+    log(`[INSTRUMENTS CACHE] ${instruments.length} instruments cached`);
+  } catch { apiInstrumentsMap = apiInstrumentsMap || new Map(); }
+  return apiInstrumentsMap!;
+}
+
+async function getApiCars(): Promise<Map<string, any>> {
+  const now = Date.now();
+  if (apiCarsMap && (now - apiCarsCacheTS) < API_CACHE_TTL) return apiCarsMap;
+  try {
+    const res = await axiosInstance.get("https://fortnite-api.com/v2/cosmetics/cars", { params: { language: 'en' } });
+    const cars: any[] = res.data?.data || [];
+    const map = new Map<string, any>();
+    for (const car of cars) {
+      if (!car?.id) continue;
+      const apiId = car.id.toLowerCase();
+      map.set(apiId, car);
+      // Also index by vehicleId (e.g. VCID_BodyAkumaTi → body_akuma entry)
+      if (car.vehicleId) map.set(car.vehicleId.toLowerCase(), car);
+      const colonIdx = apiId.indexOf(':');
+      if (colonIdx >= 0) map.set(apiId.slice(colonIdx + 1), car);
+    }
+    apiCarsMap = map;
+    apiCarsCacheTS = now;
+    log(`[CARS CACHE] ${cars.length} vehicle cosmetics cached`);
+  } catch { apiCarsMap = apiCarsMap || new Map(); }
+  return apiCarsMap!;
+}
+
 function findCosmeticInAPI(cosmeticId: string, cosmeticType: string, backendValue: string): any {
+  const idLower = cosmeticId.toLowerCase();
+
+  // Tracks — lookup in tracks API map
+  if (TRACK_TYPES.has(cosmeticType)) {
+    if (!apiTracksMap) return null;
+    return apiTracksMap.get(idLower) || null;
+  }
+
+  // Banners — lookup in banners API map
+  if (BANNER_TYPES.has(cosmeticType)) {
+    if (!apiBannersMap) return null;
+    return apiBannersMap.get(idLower) || null;
+  }
+
+  // Instruments — lookup in instruments API map
+  if (INSTRUMENT_TYPES.has(cosmeticType)) {
+    if (!apiInstrumentsMap) return null;
+    return apiInstrumentsMap.get(idLower) || null;
+  }
+
+  // Vehicles — lookup in cars API map
+  if (VEHICLE_TYPES.has(cosmeticType)) {
+    if (!apiCarsMap) return null;
+    return apiCarsMap.get(idLower) || null;
+  }
+
+  // Standard BR cosmetics
   if (!apiCosmeticsMap) return null;
-  const cosmetic = apiCosmeticsMap.get(cosmeticId.toLowerCase());
+  const cosmetic = apiCosmeticsMap.get(idLower);
   if (!cosmetic) return null;
 
   if (EID_TYPES.has(cosmeticType) || cosmeticType === 'eid_generic') {
@@ -452,12 +625,31 @@ export async function generateLockerImage({ accessToken, accountId, type = 'all'
 
     preloadLogos();
 
-    const [userCosmetics, apiCosmetics] = await Promise.all([
+    const [rawUserCosmetics, apiCosmetics] = await Promise.all([
       getUserCosmetics(accountId, accessToken, activeFilters.types),
-      getApiCosmetics()
+      getApiCosmetics(),
     ]);
 
+    // Also fetch specialized APIs in parallel (tracks, banners, instruments, cars)
+    await Promise.all([
+      getApiTracks(),
+      getApiBanners(),
+      getApiInstruments(),
+      getApiCars(),
+    ]);
+
+    let userCosmetics = rawUserCosmetics;
+
     if (userCosmetics.length === 0) throw new Error("No se encontraron cosméticos");
+
+    // If equippedItemIds provided, filter to only those items
+    if (activeFilters.equippedItemIds && activeFilters.equippedItemIds.length > 0) {
+      const idSet = new Set(activeFilters.equippedItemIds.map(id => id.toLowerCase()));
+      const beforeCount = userCosmetics.length;
+      userCosmetics = userCosmetics.filter(uc => idSet.has(uc.templateId.toLowerCase()));
+      log(`[EQUIPPED FILTER] ${beforeCount} → ${userCosmetics.length} (whitelist: ${idSet.size})`);
+      if (userCosmetics.length === 0) throw new Error('No equipped cosmetics found in profile');
+    }
 
     apiCosmeticsMap = buildApiMap(apiCosmetics);
 
@@ -515,11 +707,39 @@ export async function generateLockerImage({ accessToken, accountId, type = 'all'
         if (!extData || !activeFilters.chapters.includes(String(extData.chapter))) continue;
       }
 
+      // Extract image URL based on cosmetic type
+      let imageUrl: string | undefined;
+      if (TRACK_TYPES.has(uc.type) || TRACK_TYPES.has(uc.originalType || '')) {
+        // Tracks use albumArt
+        imageUrl = api?.albumArt;
+      } else if (BANNER_TYPES.has(uc.type) || BANNER_TYPES.has(uc.originalType || '')) {
+        // Banners use images.smallIcon or images.icon
+        imageUrl = api?.images?.smallIcon || api?.images?.icon;
+      } else if (INSTRUMENT_TYPES.has(uc.type) || INSTRUMENT_TYPES.has(uc.originalType || '')) {
+        // Instruments use images.small or images.large
+        const img = api?.images ?? {};
+        imageUrl = img.small || img.large || img.smallIcon || img.icon;
+      } else if (VEHICLE_TYPES.has(uc.type) || VEHICLE_TYPES.has(uc.originalType || '')) {
+        // Vehicle cosmetics use images.small or images.icon
+        const img = api?.images ?? {};
+        imageUrl = img.small || img.icon || img.smallIcon || img.large;
+      } else {
+        imageUrl = api?.images?.icon || api?.images?.smallIcon;
+      }
+
+      // Extract name (tracks use title, banners use name)
+      let cosmeticName: string;
+      if (TRACK_TYPES.has(uc.type) || TRACK_TYPES.has(uc.originalType || '')) {
+        cosmeticName = api?.title || api?.name || uc.id || "?????";
+      } else {
+        cosmeticName = api?.name || uc.id || "?????";
+      }
+
       processedCosmetics.push({
-        name: api?.name || uc.id || "?????",
+        name: cosmeticName,
         rarity,
         series: api?.series?.backendValue,
-        imageUrl: api?.images?.icon || api?.images?.smallIcon,
+        imageUrl,
         added: api?.added,
         type: uc.originalType || uc.type,
         isExclusive
@@ -694,7 +914,9 @@ export async function generateLockerImage({ accessToken, accountId, type = 'all'
     const cards = (await Promise.all(cardPromises)).filter(Boolean) as { buffer: Buffer; x: number; y: number }[];
     log(`Tarjetas: ${cards.length}/${sortedCosmetics.length}`);
 
-    const composites = cards.map(c => ({ input: c.buffer, top: c.y, left: c.x }));
+    const composites = cards
+      .filter(c => c.x >= 0 && c.y >= 0 && c.x + cardSize <= canvasWidth && c.y + cardSize <= canvasHeight)
+      .map(c => ({ input: c.buffer, top: c.y, left: c.x }));
 
     // Procesamiento normal: primero crear canvas con tarjetas, luego aplicar header/footer
     const canvas = await sharp({
@@ -709,18 +931,26 @@ export async function generateLockerImage({ accessToken, accountId, type = 'all'
 
     if (displayName) {
       const censoredName = censorDisplayName(displayName);
-      const textSVG = createTextSVG(censoredName, headerFontSize, 'white');
       const headerSpacing = Math.max(10, Math.round(15 * scaleFactor));
       const headerMargin = Math.max(15, Math.round(25 * scaleFactor));
       const headerLogoY = Math.max(10, Math.round(15 * scaleFactor));
+      const headerTextLeft = headerMargin + logoSizeHeader + headerSpacing;
+      const headerMaxTextW = Math.max(50, canvasWidth - headerTextLeft - 10);
+      const textSVG = createTextSVG(censoredName, headerFontSize, 'white', headerMaxTextW);
       const headerTextY = headerLogoY + Math.round((logoSizeHeader - textSVG.height) / 2);
 
       if (epicLogoBuffer) {
-        const logo = await sharp(epicLogoBuffer).resize(logoSizeHeader, logoSizeHeader, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } }).toBuffer();
+        const logo = await sharp(epicLogoBuffer).resize(
+          Math.min(logoSizeHeader, canvasWidth - headerMargin),
+          Math.min(logoSizeHeader, canvasHeight - headerLogoY),
+          { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } },
+        ).toBuffer();
         headerFooterComposites.push({ input: logo, top: headerLogoY, left: headerMargin });
       }
 
-      headerFooterComposites.push({ input: textSVG.svg, top: Math.max(0, headerTextY), left: headerMargin + logoSizeHeader + headerSpacing });
+      if (headerTextLeft + textSVG.width <= canvasWidth && Math.max(0, headerTextY) + textSVG.height <= canvasHeight) {
+        headerFooterComposites.push({ input: textSVG.svg, top: Math.max(0, headerTextY), left: headerTextLeft });
+      }
     }
 
     const now = new Date();
@@ -730,21 +960,25 @@ export async function generateLockerImage({ accessToken, accountId, type = 'all'
     const textSpacing = Math.max(2, Math.round(4 * scaleFactor));
     const horizontalSpacing = Math.max(8, Math.round(12 * scaleFactor));
     
-    // Crear textos del footer
-    const footerText = createTextSVG(DISCORD_INVITE_URL, footerFontSize, '#1E90FF');
-    const footerDate = createTextSVG(footerDateStr, footerDateFontSize, 'white');
+    // Crear textos del footer — clamp max width
+    const footerMaxTextW = Math.max(50, canvasWidth - footerMargin * 2 - logoSizeFooter - horizontalSpacing - 10);
+    const footerText = createTextSVG(DISCORD_INVITE_URL, footerFontSize, '#1E90FF', footerMaxTextW);
+    const footerDate = createTextSVG(footerDateStr, footerDateFontSize, 'white', footerMaxTextW);
     
     // Calcular altura total necesaria para las dos líneas de texto
     const textBlockHeight = footerText.height + textSpacing + footerDate.height;
-    const footerLogoSize = Math.max(textBlockHeight, logoSizeFooter);
+    const footerLogoSize = Math.min(Math.max(textBlockHeight, logoSizeFooter), canvasHeight / 3);
     
     // Posición Y del footer (desde el final del canvas)
-    const footerStartY = canvasHeight - footerLogoSize - Math.max(10, Math.round(15 * scaleFactor));
+    const footerStartY = Math.max(0, canvasHeight - footerLogoSize - Math.max(10, Math.round(15 * scaleFactor)));
     
     // Logo del bot a la izquierda (ocupando altura de las dos líneas)
     if (botLogoBuffer) {
-      const logo = await sharp(botLogoBuffer).resize(footerLogoSize, footerLogoSize, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } }).toBuffer();
-      headerFooterComposites.push({ input: logo, top: footerStartY, left: footerMargin });
+      const fls = Math.min(footerLogoSize, canvasWidth - footerMargin, canvasHeight - footerStartY);
+      if (fls > 0) {
+        const logo = await sharp(botLogoBuffer).resize(fls, fls, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } }).toBuffer();
+        headerFooterComposites.push({ input: logo, top: footerStartY, left: footerMargin });
+      }
     }
     
     // Textos a la derecha del logo
@@ -753,18 +987,27 @@ export async function generateLockerImage({ accessToken, accountId, type = 'all'
     // Centrar verticalmente el bloque de texto respecto al logo
     const textBlockStartY = footerStartY + Math.round((footerLogoSize - textBlockHeight) / 2);
     
-    // Link de Discord arriba
-    headerFooterComposites.push({ input: footerText.svg, top: textBlockStartY, left: textX });
+    // Link de Discord arriba — safe bounds check
+    if (textX + footerText.width <= canvasWidth && textBlockStartY >= 0 && textBlockStartY + footerText.height <= canvasHeight) {
+      headerFooterComposites.push({ input: footerText.svg, top: textBlockStartY, left: textX });
+    }
     
     // Fecha abajo del link
     const footerDateY = textBlockStartY + footerText.height + textSpacing;
-    headerFooterComposites.push({ input: footerDate.svg, top: footerDateY, left: textX });
+    if (textX + footerDate.width <= canvasWidth && footerDateY >= 0 && footerDateY + footerDate.height <= canvasHeight) {
+      headerFooterComposites.push({ input: footerDate.svg, top: footerDateY, left: textX });
+    }
 
     // Aplicar header/footer
-    let composedImage = await sharp(canvas)
-      .composite(headerFooterComposites)
-      .png({ compressionLevel: 6, adaptiveFiltering: true })
-      .toBuffer();
+    let composedImage: Buffer;
+    if (headerFooterComposites.length > 0) {
+      composedImage = await sharp(canvas)
+        .composite(headerFooterComposites)
+        .png({ compressionLevel: 6, adaptiveFiltering: true })
+        .toBuffer();
+    } else {
+      composedImage = canvas;
+    }
 
     // Verificar tamaño y comprimir si es necesario
     let fileSizeMB = composedImage.length / (1024 * 1024);
