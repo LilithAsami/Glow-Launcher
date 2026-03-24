@@ -29,7 +29,9 @@ import { epicAccountPage } from './epicaccount';
 import { giftsPage } from './gifts';
 import { fnlaunchPage } from './fnlaunch';
 import { libraryPage } from './library';
+import { customplPage } from './custompl';
 import { lookupPage } from './lookup';
+import { stwExchangePage } from './stwExchange';
 
 // ============================================================
 //  PAGE REGISTRY  (sidebar pages only)
@@ -56,10 +58,12 @@ export const sidebarGroups: SidebarGroup[] = [
     label: 'STW',
     pages: [
       alertsPage,
+      stwExchangePage,
       llamasPage,
       questsPage,
       dupePage,
       partyPage,
+      customplPage,
       xpBoostsPage,
       stalkPage,
       outpostPage,

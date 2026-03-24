@@ -248,3 +248,62 @@ export async function importFromOtherLaunchers(storage: Storage): Promise<Import
 
   return { results };
 }
+
+// ── Import from GLOW JSON ───────────────────────────────────────────────────
+
+export async function importFromGlowJson(
+  storage: Storage,
+  jsonPath: string,
+): Promise<ImportResult> {
+  const results: ImportAccountResult[] = [];
+
+  let parsed: any;
+  try {
+    parsed = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
+  } catch {
+    return { results: [{ accountId: '', displayName: '', source: 'GLOW JSON', status: 'error', message: 'Could not read or parse the file' }] };
+  }
+
+  const rawAccounts: any[] = Array.isArray(parsed?.accounts) ? parsed.accounts : [];
+  if (rawAccounts.length === 0) {
+    return { results: [{ accountId: '', displayName: '', source: 'GLOW JSON', status: 'error', message: 'No accounts found in the file' }] };
+  }
+
+  const data = await getAccountsData(storage);
+  const existingIds = new Set(data.accounts.map((a) => a.accountId));
+
+  for (const raw of rawAccounts) {
+    const { accountId, displayName, deviceId, secret } = raw;
+    if (!accountId || !deviceId || !secret) {
+      results.push({ accountId: accountId || '', displayName: displayName || '', source: 'GLOW JSON', status: 'error', message: 'Missing required fields (accountId, deviceId, secret)' });
+      continue;
+    }
+
+    if (existingIds.has(accountId)) {
+      results.push({ accountId, displayName: displayName || accountId, source: 'GLOW JSON', status: 'existing' });
+      continue;
+    }
+
+    const freshData = await getAccountsData(storage);
+    const newAccount: StoredAccount = {
+      accountId,
+      displayName: displayName || accountId,
+      deviceId,
+      secret,
+      isMain: freshData.accounts.length === 0,
+      addedAt: raw.addedAt ?? Date.now(),
+    };
+
+    // Check again for race conditions
+    if (freshData.accounts.find((a) => a.accountId === accountId)) {
+      results.push({ accountId, displayName: newAccount.displayName, source: 'GLOW JSON', status: 'existing' });
+    } else {
+      freshData.accounts.push(newAccount);
+      await storage.set('accounts', freshData);
+      existingIds.add(accountId);
+      results.push({ accountId, displayName: newAccount.displayName, source: 'GLOW JSON', status: 'added' });
+    }
+  }
+
+  return { results };
+}

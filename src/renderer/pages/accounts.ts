@@ -4,7 +4,7 @@ import { invalidAccounts } from '../core/toolbar';
 const TOS_URL = 'https://drive.google.com/file/d/1jGCV_duxccWJo9n9dCt_eGf0iJ-CtFgz/view?usp=sharing';
 const EXCHANGE_CODE_URL = 'https://www.epicgames.com/id/api/redirect?clientId=3f69e56c7649492c8cc29f1af08a8a12&responseType=code';
 const AUTH_CODE_URL = 'https://www.epicgames.com/id/api/redirect?clientId=3f69e56c7649492c8cc29f1af08a8a12&responseType=code';
-type View = 'loading' | 'tos' | 'list' | 'choose-method' | 'device-auth' | 'device-code' | 'exchange-input' | 'auth-code-input' | 'processing' | 'success' | 'error' | 'import-launchers' | 'import-results';
+type View = 'loading' | 'tos' | 'list' | 'choose-method' | 'device-auth' | 'device-code' | 'exchange-input' | 'auth-code-input' | 'processing' | 'success' | 'error' | 'import-launchers' | 'import-glow-json' | 'import-results';
 
 let view: View = 'loading';
 let el: HTMLElement | null = null;
@@ -36,6 +36,7 @@ function draw(): void {
     'success':          drawSuccess,
     'error':            drawError,
     'import-launchers': drawImportLaunchers,
+    'import-glow-json':  drawImportGlowJson,
     'import-results':   drawImportResults,
   };
   r[view]();
@@ -308,6 +309,20 @@ function drawChooseMethod(): void {
             <p class="method-desc">Auto-detect accounts from Aerial and Spitfire launchers installed on this PC.</p>
           </div>
         </button>
+
+        <button class="method-card" id="method-glow-json">
+          <div class="method-icon">📂</div>
+          <div class="method-info">
+            <h3 class="method-title">Import GLOW JSON</h3>
+            <p class="method-desc">Load accounts from a previously exported GLOW accounts file.</p>
+          </div>
+        </button>
+      </div>
+
+      <div class="export-accounts-section">
+        <button class="btn btn-ghost btn-export-accounts" id="btn-export-accounts">
+          <span class="export-icon">&#8599;</span> Export Accounts JSON
+        </button>
       </div>
 
       <button class="btn btn-ghost btn-back" id="btn-back">← Back</button>
@@ -330,6 +345,28 @@ function drawChooseMethod(): void {
   });
   el!.querySelector('#method-import')?.addEventListener('click', () => {
     go('import-launchers');
+  });
+  el!.querySelector('#method-glow-json')?.addEventListener('click', () => {
+    go('import-glow-json');
+  });
+  el!.querySelector('#btn-export-accounts')?.addEventListener('click', async () => {
+    const btn = el!.querySelector('#btn-export-accounts') as HTMLButtonElement;
+    const original = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="export-icon">&#8987;</span> Exporting...';
+    try {
+      const result = await window.glowAPI.accounts.exportAccounts();
+      if (result.success) {
+        btn.innerHTML = '<span class="export-icon">&#10003;</span> Exported!';
+      } else {
+        btn.innerHTML = original;
+      }
+    } catch {
+      btn.innerHTML = original;
+    } finally {
+      btn.disabled = false;
+      setTimeout(() => { btn.innerHTML = original; }, 2000);
+    }
   });
   el!.querySelector('#btn-back')?.addEventListener('click', () => {
     go('list');
@@ -500,6 +537,34 @@ function drawImportLaunchers(): void {
       go('error');
     } else {
       // Refresh data so the list is up to date
+      data = await window.glowAPI.accounts.getAll();
+      go('import-results');
+    }
+  }).catch((err: any) => {
+    result = { message: err?.message || 'Import failed unexpectedly' };
+    go('error');
+  });
+}
+
+function drawImportGlowJson(): void {
+  el!.innerHTML = `
+    <div class="auth-state">
+      <div class="auth-spinner"></div>
+      <h2 class="auth-state-title">Importing accounts...</h2>
+      <p class="auth-state-text">Select a GLOW accounts JSON file to import.</p>
+    </div>
+  `;
+
+  window.glowAPI.accounts.importFromGlowJson().then(async (res) => {
+    if (res.cancelled) {
+      go('choose-method');
+      return;
+    }
+    importResults = res.results;
+    if (importResults.length === 0) {
+      result = { message: 'No accounts found in the selected file.' };
+      go('error');
+    } else {
       data = await window.glowAPI.accounts.getAll();
       go('import-results');
     }

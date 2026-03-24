@@ -218,6 +218,55 @@ export interface ShopActionResult {
   error?: string;
 }
 
+// ── STW Exchange ────────────────────────────────────────────
+
+export interface PrerollItem {
+  templateId: string;
+  title: string;
+  rarity: string;
+  rarityColor: string;
+  icon: string | null;
+  quantity: number;
+}
+
+export interface STWShopItem {
+  offerId: string;
+  devName: string;
+  title: string;
+  description: string;
+  itemType: string;
+  itemCategory: string;
+  rarity: string;
+  rarityColor: string;
+  quantity: number;
+  price: number;
+  currencyType: string;
+  currencyIcon: string;
+  rawCurrencyType: string;
+  rawCurrencySubType: string;
+  icon: string | null;
+  dailyLimit: number;
+  weeklyLimit: number;
+  eventLimit: number;
+  sortPriority: number;
+  prerollContents: PrerollItem[];
+}
+
+export interface STWShopSection {
+  id: string;
+  name: string;
+  items: STWShopItem[];
+}
+
+export interface STWExchangeData {
+  success: boolean;
+  sections: STWShopSection[];
+  gold: number;
+  xrayTickets: number;
+  expiration: string;
+  error?: string;
+}
+
 export interface GlowAPI {
   storage: {
     get: <T = unknown>(key: string) => Promise<T | null>;
@@ -228,6 +277,7 @@ export interface GlowAPI {
     notifyTrayChanged: (enabled: boolean) => void;
     notifyStartupChanged: (enabled: boolean) => void;
     detectFortnitePath: () => Promise<{ success: boolean; path: string | null; error?: string }>;
+    validateFortnitePath: (rawPath: string) => Promise<{ valid: boolean; path: string | null }>;
     onPathDetected: (cb: (path: string) => void) => void;
     offPathDetected: () => void;
   };
@@ -245,6 +295,8 @@ export interface GlowAPI {
     submitAuthorizationCode: (code: string) => Promise<void>;
     cancelAuth: () => Promise<void>;
     importFromLaunchers: () => Promise<{ results: Array<{ accountId: string; displayName: string; source: string; status: 'added' | 'existing' | 'error'; message?: string }> }>;
+    importFromGlowJson: () => Promise<{ results: Array<{ accountId: string; displayName: string; source: string; status: 'added' | 'existing' | 'error'; message?: string }>; cancelled?: boolean }>;
+    exportAccounts: () => Promise<{ success: boolean; cancelled?: boolean; filePath?: string }>;
     remove: (accountId: string) => Promise<AccountsData>;
     setMain: (accountId: string) => Promise<AccountsData>;
     reorder: (orderedIds: string[]) => Promise<AccountsData>;
@@ -315,6 +367,12 @@ export interface GlowAPI {
     getMissionsForce: () => Promise<ZoneMissions[]>;
     getCompleted: () => Promise<{ success: boolean; claimData: AlertClaimEntry[]; error?: string }>;
   };
+  stwExchange: {
+    getData: () => Promise<STWExchangeData>;
+    getDataForce: () => Promise<STWExchangeData>;
+    getGold: () => Promise<{ success: boolean; gold: number; xrayTickets: number; error?: string }>;
+    buy: (offerId: string, price: number, quantity: number, currencyType: string, currencySubType: string) => Promise<{ success: boolean; error?: string }>;
+  };
   locker: {
     generate: (filters: { types: string[]; rarities: string[]; chapters: string[]; exclusive: boolean; equippedItemIds?: string[] }) =>
       Promise<{ success: boolean; fileName?: string; path?: string; count?: number; time?: string; sizeMB?: string; error?: string }>;
@@ -330,6 +388,9 @@ export interface GlowAPI {
   };
   files: {
     getWorldInfo: () => Promise<{ success: boolean; data?: any; missions?: number; alerts?: number; theaters?: number; sizeMB?: string; error?: string }>;
+    getDevMissions: () => Promise<{ success: boolean; data?: any; missions?: number; alerts?: number; theaters?: number; sizeMB?: string; error?: string }>;
+    getFunnyFile: () => Promise<{ success: boolean; data?: any; missions?: number; alerts?: number; theaters?: number; sizeMB?: string; error?: string }>;
+    getDupeFile: () => Promise<{ success: boolean; data?: any; missions?: number; alerts?: number; theaters?: number; sizeMB?: string; error?: string }>;
     workerPower: (targetLevel: number) => Promise<{ success: boolean; data?: any; workerCount?: number; heroCount?: number; modified?: number; sizeMB?: string; error?: string }>;
     save: (jsonString: string, defaultName: string) => Promise<{ saved: boolean; path?: string }>;
     devBuildStatus: () => Promise<{ found: boolean; activated: boolean; filePath: string | null; error?: string }>;
@@ -348,6 +409,9 @@ export interface GlowAPI {
     trapHeightModifiedTraps: () => Promise<{ guid: string; name: string; currentHeight: string; desc: string; rarity: string; tier: string }[]>;
     trapHeightFamilyInfo: () => Promise<Record<string, { key: string; category: string; defaultHeight: { hex: string; uu: number }; insideFloor: { hex: string; uu: number } | null; heightSupported: boolean; heightOffset: number }>>;
     trapHeightData: () => Promise<{ scale: { blocks: string; hex: string; uu: number }[]; named: { key: string; label: string; hex: string; uu: number }[] }>;
+    baseHeightStatus: () => Promise<{ found: boolean; isModified: boolean; currentHeight: string; error?: string }>;
+    baseHeightApply: (newHeight: string) => Promise<{ success: boolean; message: string; currentHeight?: string; isModified?: boolean }>;
+    baseHeightRevert: () => Promise<{ success: boolean; message: string }>;
     fovStatus: () => Promise<{ found: boolean; currentByte: number | null; currentFov: number | null; filePath: string | null; error?: string }>;
     fovApply: (fovValue: number) => Promise<{ success: boolean; message: string; currentFov?: number }>;
     fovRestore: () => Promise<{ success: boolean; message: string; currentFov?: number }>;
@@ -626,6 +690,7 @@ export interface GlowAPI {
     setBanner: (bannerId: string) => Promise<{ success: boolean; message?: string; error?: string }>;
     setCrowns: (amount: number) => Promise<{ success: boolean; message?: string; error?: string }>;
     setLevel: (level: number) => Promise<{ success: boolean; message?: string; error?: string }>;
+    setPowerLevel: (powerLevel: number) => Promise<{ success: boolean; message?: string; error?: string }>;
   };
   friends: {
     getSummary: () => Promise<{

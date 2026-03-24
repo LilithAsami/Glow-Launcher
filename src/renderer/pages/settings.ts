@@ -1,6 +1,7 @@
 import type { PageDefinition } from '../../shared/types';
 import { sidebarGroups } from './registry';
 import { rebuildSidebar } from '../core/sidebar';
+import { setPotatoMode, isPotatoMode } from '../core/potato';
 import {
   type GlowTheme,
   type ThemeSettings,
@@ -30,6 +31,7 @@ interface SettingsData {
   pageBackgrounds?: boolean;
   customBackgrounds?: Record<string, string>;
   minimalist?: boolean;
+  potatoStyle?: boolean;
   ramCleanup?: boolean;
   ramCleanupInterval?: number;
   automationTimings?: {
@@ -54,7 +56,6 @@ let themeSettings: ThemeSettings = { enabled: false, activeThemeId: null, themes
 
 async function loadSettings(): Promise<void> {
   settings = (await window.glowAPI.storage.get<SettingsData>('settings')) ?? {};
-  if (!settings.fortnitePath) settings.fortnitePath = 'C:\\Program Files\\Epic Games\\Fortnite';
   if (!settings.automationTimings) {
     settings.automationTimings = { autokickCheckMs: 3000, expeditionsIntervalMs: 3600000 };
     await window.glowAPI.storage.set('settings', settings);
@@ -239,11 +240,11 @@ function draw(): void {
         <div class="settings-item">
           <div class="settings-item-info">
             <span class="settings-item-label">Minimalist Mode</span>
-            <span class="settings-item-desc">Hide labels, avatars, and decorations for a cleaner, compact interface</span>
+            <span class="settings-item-desc">${settings.potatoStyle ? 'Disabled while Potato Style is active' : 'Hide labels, avatars, and decorations for a cleaner, compact interface'}</span>
           </div>
           <label class="settings-toggle">
             <input type="checkbox" class="settings-toggle-input" id="toggle-minimalist"
-              ${settings.minimalist ? 'checked' : ''} />
+              ${settings.minimalist && !settings.potatoStyle ? 'checked' : ''} ${settings.potatoStyle ? 'disabled' : ''} />
             <span class="settings-toggle-slider"></span>
           </label>
         </div>
@@ -326,6 +327,18 @@ function draw(): void {
         </div>
         ` : ''}
         `}
+
+        <div class="settings-item" style="margin-top:8px;border-top:1px solid var(--border);padding-top:12px">
+          <div class="settings-item-info">
+            <span class="settings-item-label">Potato Style</span>
+            <span class="settings-item-desc">Replace the sidebar with a grid of icon buttons (classic launcher layout). Disables Minimalist Mode.</span>
+          </div>
+          <label class="settings-toggle">
+            <input type="checkbox" class="settings-toggle-input" id="toggle-potato-style"
+              ${settings.potatoStyle ? 'checked' : ''} />
+            <span class="settings-toggle-slider"></span>
+          </label>
+        </div>
       </div>
 
       <div class="settings-section">
@@ -379,7 +392,7 @@ function draw(): void {
             <span class="settings-item-label">App Version</span>
             <span class="settings-item-desc">Current version of GLOW Launcher</span>
           </div>
-          <span class="settings-item-value">v2.2.0</span>
+          <span class="settings-item-value">v2.3.1</span>
         </div>
 
         <div class="settings-item">
@@ -443,10 +456,19 @@ function bindEvents(): void {
   document.getElementById('fortnite-path-browse')?.addEventListener('click', async () => {
     const selected = await window.glowAPI.dialog.openDirectory();
     if (selected) {
+      const { valid, path: resolved } = await window.glowAPI.settings.validateFortnitePath(selected);
       const input = document.getElementById('fortnite-path-input') as HTMLInputElement;
-      input.value = selected;
-      settings.fortnitePath = selected;
-      await saveSettings();
+      if (valid && resolved) {
+        input.value = resolved;
+        settings.fortnitePath = resolved;
+        await saveSettings();
+        showPathToast('Valid Fortnite installation', 'success');
+      } else {
+        input.value = selected;
+        settings.fortnitePath = selected;
+        await saveSettings();
+        showPathToast('Folder does not contain a valid Fortnite installation', 'error');
+      }
     }
   });
 
@@ -454,7 +476,15 @@ function bindEvents(): void {
   pathInput?.addEventListener('change', async () => {
     const val = pathInput.value.trim();
     if (val) {
-      settings.fortnitePath = val;
+      const { valid, path: resolved } = await window.glowAPI.settings.validateFortnitePath(val);
+      if (valid && resolved) {
+        pathInput.value = resolved;
+        settings.fortnitePath = resolved;
+        showPathToast('Valid Fortnite installation', 'success');
+      } else {
+        settings.fortnitePath = val;
+        showPathToast('Path does not contain a valid Fortnite installation', 'error');
+      }
       await saveSettings();
     }
   });
@@ -498,6 +528,20 @@ function bindEvents(): void {
     await saveSettings();
     document.body.classList.toggle('minimalist', enabled);
     window.dispatchEvent(new CustomEvent('glow:minimalism-changed', { detail: { enabled } }));
+  });
+
+  // Potato style toggle
+  document.getElementById('toggle-potato-style')?.addEventListener('change', async (e) => {
+    const enabled = (e.target as HTMLInputElement).checked;
+    settings.potatoStyle = enabled;
+    if (enabled) {
+      settings.minimalist = false;
+      document.body.classList.remove('minimalist');
+      window.dispatchEvent(new CustomEvent('glow:minimalism-changed', { detail: { enabled: false } }));
+    }
+    await saveSettings();
+    setPotatoMode(enabled);
+    draw(); // re-draw to update minimalist toggle state
   });
 
   // RAM Cleanup toggle
@@ -1622,10 +1666,10 @@ function importThemeFromString(content: string, source: string): GlowTheme | nul
   // Try JSON first
   const jsonTheme = parseThemeJSON(content);
   if (jsonTheme) return jsonTheme;
-  // Try as CSS (BetterDiscord)
-  if (content.includes('{') && (content.includes('--') || content.includes('@'))) {
+  // Try as CSS (BetterDiscord, NFLD, FrostedGlass, vsthemes.org, or any Discord theme)
+  if (content.includes('{') || content.includes('--') || content.includes('@')) {
     const bdTheme = parseBetterDiscordCSS(content);
-    if (Object.keys(bdTheme.colors).length > 0 || bdTheme.customCSS) return bdTheme;
+    if (Object.keys(bdTheme.colors).length > 0 || bdTheme.background?.image || bdTheme.customCSS) return bdTheme;
   }
   return null;
 }

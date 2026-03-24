@@ -40,12 +40,13 @@ let filterMinPower = 0;
 let filterMaxPower = 0;
 let filterRewardIcons: Set<string> = new Set();
 let filterStatus: 'all' | 'done' | 'todo' = 'all';
+let filterMissionTypes: Set<string> = new Set();
 
 function hasActiveFilters(): boolean {
-  return filterZones.size > 0 || filterMinPower > 0 || filterMaxPower > 0 || filterRewardIcons.size > 0 || filterStatus !== 'all';
+  return filterZones.size > 0 || filterMinPower > 0 || filterMaxPower > 0 || filterRewardIcons.size > 0 || filterStatus !== 'all' || filterMissionTypes.size > 0;
 }
 function countActiveFilters(): number {
-  return [filterZones.size > 0, filterMinPower > 0, filterMaxPower > 0, filterRewardIcons.size > 0, filterStatus !== 'all'].filter(Boolean).length;
+  return [filterZones.size > 0, filterMinPower > 0, filterMaxPower > 0, filterRewardIcons.size > 0, filterStatus !== 'all', filterMissionTypes.size > 0].filter(Boolean).length;
 }
 function clearAllFilters(): void {
   filterZones = new Set();
@@ -53,6 +54,7 @@ function clearAllFilters(): void {
   filterMaxPower = 0;
   filterRewardIcons = new Set();
   filterStatus = 'all';
+  filterMissionTypes = new Set();
 }
 
 // ─── Shared world-info cache (renderer-side, UTC day) ────────
@@ -377,6 +379,7 @@ function getFilteredMissions(missions: ProcessedMission[]): ProcessedMission[] {
     result = result.filter((m) => [...m.alerts, ...m.rewards].some((r) => r.icon && filterRewardIcons.has(r.icon)));
   }
   if (filterStatus === 'todo') result = result.filter((m) => !isMissionDone(m));
+  if (filterMissionTypes.size > 0) result = result.filter((m) => filterMissionTypes.has(m.missionName));
   return result;
 }
 
@@ -461,6 +464,12 @@ function renderFilterPanel(allMissions: ProcessedMission[]): string {
   const minPow = powers.length ? Math.min(...powers) : 0;
   const maxPow = powers.length ? Math.max(...powers) : 160;
 
+  const missionTypeMap = new Map<string, string>();
+  for (const m of allMissions) {
+    if (m.zone !== 'Events or Campaign' && !missionTypeMap.has(m.missionName)) missionTypeMap.set(m.missionName, m.missionIcon);
+  }
+  const missionTypes = [...missionTypeMap.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+
   return `
     <div class="home-filters-panel">
       <div class="home-filter-row">
@@ -486,6 +495,17 @@ function renderFilterPanel(allMissions: ProcessedMission[]): string {
           ${rewards.map((r) => `
             <button class="home-filter-reward-pill${filterRewardIcons.has(r.icon) ? ' active' : ''}" data-freward="${r.icon}" title="${r.name}">
               <img src="${r.icon}" alt="">
+            </button>
+          `).join('')}
+        </div>
+      </div>
+      <div class="home-filter-row">
+        <span class="home-filter-label">Mission</span>
+        <div class="home-filter-pills home-filter-pills-missions">
+          ${missionTypes.map(([name, icon]) => `
+            <button class="home-filter-mission-pill${filterMissionTypes.has(name) ? ' active' : ''}" data-fmission="${name}" title="${name}">
+              <img src="${icon}" alt="">
+              <span>${name}</span>
             </button>
           `).join('')}
         </div>
@@ -521,6 +541,7 @@ function renderDoneList(allMissions: ProcessedMission[]): string {
   if (filterRewardIcons.size > 0) {
     filtered = filtered.filter((m) => [...m.alerts, ...m.rewards].some((r) => r.icon && filterRewardIcons.has(r.icon)));
   }
+  if (filterMissionTypes.size > 0) filtered = filtered.filter((m) => filterMissionTypes.has(m.missionName));
 
   if (filtered.length === 0) {
     return `<div class="home-cat-empty" style="padding:24px 0;text-align:center">${doneAlertIds.size === 0 ? 'Loading completed missions data…' : 'No completed missions found today'}</div>`;
@@ -785,6 +806,16 @@ function bindEvents(): void {
       const icon = btn.dataset.freward!;
       if (filterRewardIcons.has(icon)) filterRewardIcons.delete(icon);
       else filterRewardIcons.add(icon);
+      draw();
+    });
+  });
+
+  // Mission type filter pills
+  el?.querySelectorAll<HTMLElement>('[data-fmission]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const name = btn.dataset.fmission!;
+      if (filterMissionTypes.has(name)) filterMissionTypes.delete(name);
+      else filterMissionTypes.add(name);
       draw();
     });
   });

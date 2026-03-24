@@ -8,6 +8,24 @@ let worldInfoData: any = null;
 let worldInfoStats: { missions: number; alerts: number; theaters: number; sizeMB: string } | null = null;
 let errorMsg: string | null = null;
 
+// ── Dev Missions state ───────────────────────────────────────
+let devMissionsLoading = false;
+let devMissionsData: any = null;
+let devMissionsStats: { missions: number; alerts: number; theaters: number; sizeMB: string } | null = null;
+let devMissionsError: string | null = null;
+
+// ── Funny File state ─────────────────────────────────────────
+let funnyLoading = false;
+let funnyData: any = null;
+let funnyStats: { missions: number; alerts: number; theaters: number; sizeMB: string } | null = null;
+let funnyError: string | null = null;
+
+// ── Dupe File state ─────────────────────────────────────────
+let dupeLoading = false;
+let dupeData: any = null;
+let dupeStats: { missions: number; alerts: number; theaters: number; sizeMB: string } | null = null;
+let dupeError: string | null = null;
+
 // ── Dev Builds state ──────────────────────────────────────────
 let devLoading = false;
 let devActivated: boolean | null = null;
@@ -70,6 +88,24 @@ let trapModifiedList: ModifiedTrap[] = [];
 let trapViewMode: 'grid' | 'detail' = 'grid';
 let trapApplyingGuid: string | null = null;
 
+// Trap families available in trapmod (only these are shown)
+const TRAPMOD_FAMILIES = new Set([
+  'Flame Grill Floor Trap',
+  'Floor Freeze Trap',
+  'Retractable Floor Spikes',
+  'Tar Pit',
+  'Wooden Floor Spikes',
+]);
+
+// B.A.S.E PREMIUM state
+let baseLoading = false;
+let trapHexModalGuid: string | null = null;
+let baseError: string | null = null;
+let baseCurrentHeight = '74 C2';
+let baseIsModified = false;
+let baseFound = false;
+let baseCustomInput = -61;
+
 // ─── Helpers ──────────────────────────────────────────────────
 
 function getDefaultFileName(): string {
@@ -78,6 +114,30 @@ function getDefaultFileName(): string {
   const m = String(now.getMonth() + 1).padStart(2, '0');
   const y = now.getFullYear();
   return `worldinfo_${y}_${m}_${d}`;
+}
+
+function getDevMissionsFileName(): string {
+  const now = new Date();
+  const d = String(now.getDate()).padStart(2, '0');
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const y = now.getFullYear();
+  return `devmissions_${y}_${m}_${d}`;
+}
+
+function getFunnyFileName(): string {
+  const now = new Date();
+  const d = String(now.getDate()).padStart(2, '0');
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const y = now.getFullYear();
+  return `funny_${y}_${m}_${d}`;
+}
+
+function getDupeFileName(): string {
+  const now = new Date();
+  const d = String(now.getDate()).padStart(2, '0');
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const y = now.getFullYear();
+  return `dupefile_${y}_${m}_${d}`;
 }
 
 function getWpFileName(): string {
@@ -133,6 +193,7 @@ function getFamiliesByCategory(): Record<string, string[]> {
   if (!trapFamilyInfo) return {};
   const result: Record<string, string[]> = { floor: [], wall: [], ceiling: [] };
   for (const [desc, info] of Object.entries(trapFamilyInfo)) {
+    if (!TRAPMOD_FAMILIES.has(desc)) continue;
     const cat = info.category || 'floor';
     if (!result[cat]) result[cat] = [];
     result[cat].push(desc);
@@ -278,6 +339,70 @@ function getPresetsForFamily(familyDesc: string | null): TrapPreset[] {
   return presets;
 }
 
+// ─── Float <-> Hex conversion (renderer side) ────────────────
+
+function floatToHeightHex(val: number): string {
+  const ab = new ArrayBuffer(4);
+  new DataView(ab).setFloat32(0, val, true);
+  const bytes = new Uint8Array(ab);
+  return bytes[2].toString(16).padStart(2, '0').toUpperCase() + ' ' +
+         bytes[3].toString(16).padStart(2, '0').toUpperCase();
+}
+
+function heightHexToFloat(hex: string): number {
+  const parts = hex.trim().split(/\s+/);
+  const ab = new ArrayBuffer(4);
+  const bytes = new Uint8Array(ab);
+  bytes[0] = 0;
+  bytes[1] = 0;
+  bytes[2] = parseInt(parts[0], 16);
+  bytes[3] = parseInt(parts[1], 16);
+  return new DataView(ab).getFloat32(0, true);
+}
+
+// ─── B.A.S.E PREMIUM Section ─────────────────────────────────
+
+function renderBaseSection(): string {
+  if (!trapList) return '';
+
+  const baseLoadingHtml = baseLoading ? `
+    <div class="files-card-loading" style="padding:0">
+      <div class="files-spinner"></div>
+      <span>Processing...</span>
+    </div>` : '';
+
+  const baseErrorHtml = baseError ? `
+    <div class="files-card-error" style="margin:4px 0">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+      <span>${esc(baseError)}</span>
+    </div>` : '';
+
+  const currentFloat = heightHexToFloat(baseCurrentHeight);
+
+  return `
+    <div class="trap-cat" style="margin-top:12px">
+      <div class="trap-cat-label" style="display:flex;align-items:center;gap:8px">
+        <img src="assets/icons/stw/traps/Icon_Constructor_BASE.png" width="22" height="22" style="object-fit:contain;flex-shrink:0" alt="" draggable="false" />
+        B.A.S.E PREMIUM
+      </div>
+      <div class="base-premium-card">
+        <div class="base-premium-row">
+          <span class="base-premium-label">Height (UU)</span>
+          <input type="text" class="files-trap-input base-height-input" id="base-height-input"
+            value="${baseCustomInput}" inputmode="decimal" />
+          <span class="base-premium-hex" title="Current hex">${esc(baseCurrentHeight)}</span>
+        </div>
+        <div class="base-premium-info">Default: -61 UU (74 C2)${baseIsModified ? ` · Current: ${Math.round(currentFloat)} UU` : ''}</div>
+        ${baseErrorHtml}
+        ${baseLoadingHtml}
+        <div class="base-premium-actions">
+          <button class="files-btn files-btn--primary files-btn--sm" id="base-apply" ${baseLoading ? 'disabled' : ''}>Apply</button>
+          ${baseIsModified ? `<button class="files-btn files-btn--danger files-btn--sm" id="base-revert" ${baseLoading ? 'disabled' : ''}>Revert</button>` : ''}
+        </div>
+      </div>
+    </div>`;
+}
+
 // ─── Trap Section Renderers ───────────────────────────────────
 
 function renderTrapSection(): string {
@@ -388,6 +513,7 @@ function renderTrapGrid(): string {
       ${errorHtml}
       ${loadingHtml}
       ${categorySections}
+      ${renderBaseSection()}
       ${modifiedSection}
     </div>`;
 }
@@ -440,6 +566,7 @@ function renderTrapDetail(): string {
           <button class="files-btn files-btn--primary files-btn--sm trap-item-apply" data-guid="${trap.guid}" ${controlsDisabled ? 'disabled' : ''}>
             ${isApplying ? '<div class="files-spinner" style="width:12px;height:12px"></div>' : 'Apply'}
           </button>
+          <button class="files-btn files-btn--ghost files-btn--sm trap-item-custom" data-guid="${trap.guid}" ${controlsDisabled ? 'disabled' : ''}>Custom</button>
           ${isModified ? `
           <button class="files-btn files-btn--danger files-btn--sm trap-item-revert" data-guid="${trap.guid}" ${controlsDisabled ? 'disabled' : ''}>Revert</button>
           ` : ''}
@@ -480,8 +607,14 @@ function draw(): void {
   el.innerHTML = `
     <div class="files-page">
       <div class="files-header">
-        <h1 class="page-title">Files & Tools</h1>
-        <p class="page-subtitle">File exports and game patches</p>
+        <div class="files-header-main">
+          <h1 class="page-title">Files &amp; Tools</h1>
+          <p class="page-subtitle">File exports and game patches</p>
+        </div>
+        <button class="files-info-btn" id="files-info-btn" title="How to use these files">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+          How to use
+        </button>
       </div>
 
       <div class="files-grid">
@@ -548,6 +681,212 @@ function draw(): void {
               <button class="files-btn files-btn--primary" id="files-worldinfo-generate">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                 Generate World Info
+              </button>
+            `}
+          </div>
+        </div>
+
+        <!-- Dev Missions Card -->
+        <div class="files-card" id="files-devmissions-card">
+          <div class="files-card-icon">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"/>
+              <path d="M2 12h20"/>
+              <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+              <path d="M8 16l8-8"/>
+              <path d="M10 8h6v6"/>
+            </svg>
+          </div>
+          <div class="files-card-body">
+            <h3 class="files-card-title">Dev Missions</h3>
+            <p class="files-card-desc">STW world info JSON converted to dev-style.</p>
+
+            ${devMissionsLoading ? `
+              <div class="files-card-loading">
+                <div class="files-spinner"></div>
+                <span>Generating dev missions...</span>
+              </div>
+            ` : devMissionsError ? `
+              <div class="files-card-error">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+                <span>${devMissionsError}</span>
+              </div>
+              <button class="files-btn files-btn--primary" id="files-devmissions-generate">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+                Retry
+              </button>
+            ` : devMissionsData ? `
+              <div class="files-card-stats">
+                <div class="files-stat">
+                  <span class="files-stat-value">${devMissionsStats?.theaters ?? 0}</span>
+                  <span class="files-stat-label">Theaters</span>
+                </div>
+                <div class="files-stat">
+                  <span class="files-stat-value">${devMissionsStats?.missions ?? 0}</span>
+                  <span class="files-stat-label">Missions</span>
+                </div>
+                <div class="files-stat">
+                  <span class="files-stat-value">${devMissionsStats?.alerts ?? 0}</span>
+                  <span class="files-stat-label">Alerts</span>
+                </div>
+                <div class="files-stat">
+                  <span class="files-stat-value">${devMissionsStats?.sizeMB ?? '0'}MB</span>
+                  <span class="files-stat-label">Size</span>
+                </div>
+              </div>
+              <div class="files-card-actions">
+                <button class="files-btn files-btn--primary" id="files-devmissions-download">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                  Download JSON
+                </button>
+                <button class="files-btn files-btn--secondary" id="files-devmissions-preview">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                  Preview JSON
+                </button>
+                <button class="files-btn files-btn--ghost" id="files-devmissions-refresh">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+                </button>
+              </div>
+            ` : `
+              <button class="files-btn files-btn--primary" id="files-devmissions-generate">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                Generate Dev Missions
+              </button>
+            `}
+          </div>
+        </div>
+
+        <!-- Funny File Card -->
+        <div class="files-card" id="files-funnyfile-card">
+          <div class="files-card-icon">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15V8a2 2 0 0 0-2-2h-7"/>
+              <path d="M7 8H5a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-2"/>
+              <path d="M8 5l4-4 4 4"/>
+              <path d="M12 1v14"/>
+            </svg>
+          </div>
+          <div class="files-card-body">
+            <h3 class="files-card-title">Funny File</h3>
+            <p class="files-card-desc">World info JSON with custom fields.</p>
+
+            ${funnyLoading ? `
+              <div class="files-card-loading">
+                <div class="files-spinner"></div>
+                <span>Generating file...</span>
+              </div>
+            ` : funnyError ? `
+              <div class="files-card-error">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+                <span>${funnyError}</span>
+              </div>
+              <button class="files-btn files-btn--primary" id="files-funnyfile-generate">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+                Retry
+              </button>
+            ` : funnyData ? `
+              <div class="files-card-stats">
+                <div class="files-stat">
+                  <span class="files-stat-value">${funnyStats?.theaters ?? 0}</span>
+                  <span class="files-stat-label">Theaters</span>
+                </div>
+                <div class="files-stat">
+                  <span class="files-stat-value">${funnyStats?.missions ?? 0}</span>
+                  <span class="files-stat-label">Missions</span>
+                </div>
+                <div class="files-stat">
+                  <span class="files-stat-value">${funnyStats?.alerts ?? 0}</span>
+                  <span class="files-stat-label">Alerts</span>
+                </div>
+                <div class="files-stat">
+                  <span class="files-stat-value">${funnyStats?.sizeMB ?? '0'}MB</span>
+                  <span class="files-stat-label">Size</span>
+                </div>
+              </div>
+              <div class="files-card-actions">
+                <button class="files-btn files-btn--primary" id="files-funnyfile-download">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                  Download JSON
+                </button>
+                <button class="files-btn files-btn--secondary" id="files-funnyfile-preview">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                  Preview JSON
+                </button>
+                <button class="files-btn files-btn--ghost" id="files-funnyfile-refresh">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+                </button>
+              </div>
+            ` : `
+              <button class="files-btn files-btn--primary" id="files-funnyfile-generate">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                Generate File
+              </button>
+            `}
+          </div>
+        </div>
+
+        <!-- Dupe File Card -->
+        <div class="files-card" id="files-dupefile-card">
+          <div class="files-card-icon">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+            </svg>
+          </div>
+          <div class="files-card-body">
+            <h3 class="files-card-title">Dupe File</h3>
+            <p class="files-card-desc">Make your base glitch so you can duplicate.</p>
+
+            ${dupeLoading ? `
+              <div class="files-card-loading">
+                <div class="files-spinner"></div>
+                <span>Generating dupe file...</span>
+              </div>
+            ` : dupeError ? `
+              <div class="files-card-error">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+                <span>${dupeError}</span>
+              </div>
+              <button class="files-btn files-btn--primary" id="files-dupefile-generate">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+                Retry
+              </button>
+            ` : dupeData ? `
+              <div class="files-card-stats">
+                <div class="files-stat">
+                  <span class="files-stat-value">${dupeStats?.theaters ?? 0}</span>
+                  <span class="files-stat-label">Theaters</span>
+                </div>
+                <div class="files-stat">
+                  <span class="files-stat-value">${dupeStats?.missions ?? 0}</span>
+                  <span class="files-stat-label">Missions</span>
+                </div>
+                <div class="files-stat">
+                  <span class="files-stat-value">${dupeStats?.alerts ?? 0}</span>
+                  <span class="files-stat-label">Alerts</span>
+                </div>
+                <div class="files-stat">
+                  <span class="files-stat-value">${dupeStats?.sizeMB ?? '0'}MB</span>
+                  <span class="files-stat-label">Size</span>
+                </div>
+              </div>
+              <div class="files-card-actions">
+                <button class="files-btn files-btn--primary" id="files-dupefile-download">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                  Download JSON
+                </button>
+                <button class="files-btn files-btn--secondary" id="files-dupefile-preview">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                  Preview JSON
+                </button>
+                <button class="files-btn files-btn--ghost" id="files-dupefile-refresh">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+                </button>
+              </div>
+            ` : `
+              <button class="files-btn files-btn--primary" id="files-dupefile-generate">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                Generate Dupe File
               </button>
             `}
           </div>
@@ -831,11 +1170,149 @@ function draw(): void {
       ${renderTrapSection()}
     </div>
 
+    <!-- Info Modal -->
+    <div class="files-modal-overlay" id="files-info-modal-overlay" style="display:none">
+      <div class="files-modal files-info-modal">
+        <div class="files-modal-header">
+          <h2 class="files-modal-title">How to use these files</h2>
+          <button class="files-btn files-btn--ghost files-modal-close" id="files-info-modal-close" title="Close">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div class="files-info-body">
+
+          <p class="files-info-intro">The JSON files generated here are designed to be served locally via the <strong>AutoResponder</strong>. The game requests specific endpoints and AutoResponder intercepts them, returning your file instead.</p>
+
+          <div class="files-info-steps">
+            <div class="files-info-step">
+              <span class="files-info-step-num">1</span>
+              <div>
+                <strong>Generate &amp; download</strong> the file you want from this page.
+              </div>
+            </div>
+            <div class="files-info-step">
+              <span class="files-info-step-num">2</span>
+              <div>
+                Go to <strong>AutoResponder</strong> and enable the proxy using the toggle at the top-right of that page.
+              </div>
+            </div>
+            <div class="files-info-step">
+              <span class="files-info-step-num">3</span>
+              <div>
+                Add a new rule and set the <strong>URL filter</strong> and point it to your downloaded file.
+              </div>
+            </div>
+          </div>
+
+          <div class="files-info-rules">
+            <p class="files-info-rules-title">URL filter by file type</p>
+            <div class="files-info-rule-row">
+              <div class="files-info-rule-files">
+                <span class="files-info-tag">World Info</span>
+                <span class="files-info-tag">Dev Missions</span>
+                <span class="files-info-tag">Funny File</span>
+                <span class="files-info-tag">Dupe File</span>
+              </div>
+              <code class="files-info-rule-code">world/info</code>
+            </div>
+            <div class="files-info-rule-row">
+              <div class="files-info-rule-files">
+                <span class="files-info-tag">Worker Power</span>
+              </div>
+              <code class="files-info-rule-code">?profileid=campaign</code>
+            </div>
+          </div>
+
+          <div class="files-info-tip">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12.01" y2="8"/><line x1="12" y1="12" x2="12" y2="16"/></svg>
+            <span>For some files, it is recommended to have <strong>Fortnite set to English</strong> — otherwise the interception may not work correctly.</span>
+          </div>
+
+          <div class="files-info-warning">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            <span><strong>Always disable the proxy before closing GLOW Launcher.</strong> Leaving it active can interfere with your Windows system proxy settings.</span>
+          </div>
+
+          <button class="files-btn files-btn--primary files-info-nav-btn" id="files-info-go-autoresponder">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+            Go to AutoResponder
+          </button>
+
+        </div>
+      </div>
+    </div>
+
+    <!-- Info Modal -->
+    <div class="files-modal-overlay" id="files-info-modal-overlay" style="display:none">
+      <div class="files-modal files-info-modal">
+        <div class="files-modal-header">
+          <h2 class="files-modal-title">How to use these files</h2>
+          <button class="files-btn files-btn--ghost" id="files-info-modal-close" title="Close">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div class="files-info-body">
+
+          <p class="files-info-intro">The files generated here are designed to be served locally via <strong>AutoResponder</strong>. The game requests specific endpoints — AutoResponder intercepts them and returns your file instead.</p>
+
+          <div class="files-info-steps">
+            <div class="files-info-step">
+              <span class="files-info-step-num">1</span>
+              <div>Generate and download the file you want from this page.</div>
+            </div>
+            <div class="files-info-step">
+              <span class="files-info-step-num">2</span>
+              <div>Open <strong>AutoResponder</strong> and enable the proxy with the toggle at the top-right of that page.</div>
+            </div>
+            <div class="files-info-step">
+              <span class="files-info-step-num">3</span>
+              <div>Add a new rule, set the <strong>URL filter</strong> shown below, and point it to your downloaded file.</div>
+            </div>
+          </div>
+
+          <div class="files-info-rules">
+            <p class="files-info-rules-title">URL filter by file type</p>
+            <div class="files-info-rule-row">
+              <div class="files-info-rule-files">
+                <span class="files-info-tag">World Info</span>
+                <span class="files-info-tag">Dev Missions</span>
+                <span class="files-info-tag">Funny File</span>
+                <span class="files-info-tag">Dupe File</span>
+              </div>
+              <code class="files-info-rule-code">world/info</code>
+            </div>
+            <div class="files-info-rule-row files-info-rule-row--sep">
+              <div class="files-info-rule-files">
+                <span class="files-info-tag">Worker Power</span>
+              </div>
+              <code class="files-info-rule-code">?profileid=campaign</code>
+            </div>
+          </div>
+
+          <div class="files-info-tip">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12.01" y2="8"/><line x1="12" y1="12" x2="12" y2="16"/></svg>
+            <span>For some files it is recommended to have <strong>Fortnite set to English</strong> — otherwise the interception may not match correctly.</span>
+          </div>
+
+          <div class="files-info-warning">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            <span><strong>Always disable the proxy before closing GLOW Launcher.</strong> Leaving it active can interfere with Windows system proxy settings.</span>
+          </div>
+
+          <button class="files-btn files-btn--primary" id="files-info-go-autoresponder" style="width:100%;margin-top:4px;justify-content:center">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+            Go to AutoResponder
+          </button>
+
+        </div>
+      </div>
+    </div>
+
     <!-- JSON Preview Modal -->
     <div class="files-modal-overlay" id="files-modal-overlay" style="display:none">
       <div class="files-modal">
         <div class="files-modal-header">
-          <h2 class="files-modal-title">World Info Preview</h2>
+          <h2 class="files-modal-title">JSON Preview</h2>
           <div class="files-modal-header-actions">
             <button class="files-btn files-btn--ghost files-modal-copy" id="files-modal-copy" title="Copy to clipboard">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
@@ -850,6 +1327,27 @@ function draw(): void {
           <input type="text" id="files-modal-search-input" placeholder="Search in JSON..." autocomplete="off" spellcheck="false"/>
         </div>
         <pre class="files-modal-json" id="files-modal-json"></pre>
+      </div>
+    </div>
+
+    <!-- Custom Hex Modal -->
+    <div class="files-modal-overlay" id="trap-hex-modal-overlay" style="display:none">
+      <div class="files-modal files-hex-modal">
+        <div class="files-modal-header">
+          <h2 class="files-modal-title">Custom Height</h2>
+          <button class="files-btn files-btn--ghost files-modal-close" id="trap-hex-modal-close" title="Close">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div class="trap-hex-modal-body">
+          <p class="trap-hex-modal-label">Hex value <span class="trap-hex-modal-example">e.g. 20 C1</span></p>
+          <input type="text" id="trap-hex-modal-input" class="trap-hex-modal-input"
+            placeholder="XX XX" maxlength="5" autocomplete="off" spellcheck="false" />
+        </div>
+        <div class="trap-hex-modal-footer">
+          <button class="files-btn files-btn--ghost" id="trap-hex-modal-cancel">Cancel</button>
+          <button class="files-btn files-btn--primary" id="trap-hex-modal-apply">Apply</button>
+        </div>
       </div>
     </div>
   `;
@@ -873,6 +1371,45 @@ function bindEvents(): void {
 
   const refreshBtn = el.querySelector('#files-worldinfo-refresh') as HTMLButtonElement | null;
   refreshBtn?.addEventListener('click', () => loadWorldInfo());
+
+  // ── Dev Missions ─────────────────────────────────────────
+  const devMGenBtn = el.querySelector('#files-devmissions-generate') as HTMLButtonElement | null;
+  devMGenBtn?.addEventListener('click', () => loadDevMissions());
+
+  const devMDownloadBtn = el.querySelector('#files-devmissions-download') as HTMLButtonElement | null;
+  devMDownloadBtn?.addEventListener('click', () => downloadDevMissions());
+
+  const devMPreviewBtn = el.querySelector('#files-devmissions-preview') as HTMLButtonElement | null;
+  devMPreviewBtn?.addEventListener('click', () => openDevMissionsPreview());
+
+  const devMRefreshBtn = el.querySelector('#files-devmissions-refresh') as HTMLButtonElement | null;
+  devMRefreshBtn?.addEventListener('click', () => loadDevMissions());
+
+  // ── Funny File ──────────────────────────────────────────
+  const funnyGenBtn = el.querySelector('#files-funnyfile-generate') as HTMLButtonElement | null;
+  funnyGenBtn?.addEventListener('click', () => loadFunnyFile());
+
+  const funnyDownloadBtn = el.querySelector('#files-funnyfile-download') as HTMLButtonElement | null;
+  funnyDownloadBtn?.addEventListener('click', () => downloadFunnyFile());
+
+  const funnyPreviewBtn = el.querySelector('#files-funnyfile-preview') as HTMLButtonElement | null;
+  funnyPreviewBtn?.addEventListener('click', () => openFunnyFilePreview());
+
+  const funnyRefreshBtn = el.querySelector('#files-funnyfile-refresh') as HTMLButtonElement | null;
+  funnyRefreshBtn?.addEventListener('click', () => loadFunnyFile());
+
+  // ── Dupe File ───────────────────────────────────────────
+  const dupeGenBtn = el.querySelector('#files-dupefile-generate') as HTMLButtonElement | null;
+  dupeGenBtn?.addEventListener('click', () => loadDupeFile());
+
+  const dupeDownloadBtn = el.querySelector('#files-dupefile-download') as HTMLButtonElement | null;
+  dupeDownloadBtn?.addEventListener('click', () => downloadDupeFile());
+
+  const dupePreviewBtn = el.querySelector('#files-dupefile-preview') as HTMLButtonElement | null;
+  dupePreviewBtn?.addEventListener('click', () => openDupeFilePreview());
+
+  const dupeRefreshBtn = el.querySelector('#files-dupefile-refresh') as HTMLButtonElement | null;
+  dupeRefreshBtn?.addEventListener('click', () => loadDupeFile());
 
   // ── Worker Power ─────────────────────────────────────────
   const wpGenBtn = el.querySelector('#files-wp-generate') as HTMLButtonElement | null;
@@ -983,6 +1520,57 @@ function bindEvents(): void {
     });
   });
 
+  // Custom hex buttons → modal
+  el.querySelectorAll('.trap-item-custom').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const guid = (btn as HTMLElement).dataset.guid;
+      if (!guid) return;
+      trapHexModalGuid = guid;
+      const overlay = el!.querySelector('#trap-hex-modal-overlay') as HTMLElement;
+      const input = el!.querySelector('#trap-hex-modal-input') as HTMLInputElement;
+      if (input) input.value = '';
+      overlay.style.display = 'flex';
+      setTimeout(() => input?.focus(), 50);
+    });
+  });
+
+  // Custom hex modal events
+  const hexModalOverlay = el.querySelector('#trap-hex-modal-overlay') as HTMLElement | null;
+  const closeHexModal = () => { if (hexModalOverlay) hexModalOverlay.style.display = 'none'; };
+  el.querySelector('#trap-hex-modal-close')?.addEventListener('click', closeHexModal);
+  el.querySelector('#trap-hex-modal-cancel')?.addEventListener('click', closeHexModal);
+  hexModalOverlay?.addEventListener('click', (e) => { if (e.target === hexModalOverlay) closeHexModal(); });
+
+  const hexModalInput = el.querySelector('#trap-hex-modal-input') as HTMLInputElement | null;
+  const hexModalApply = el.querySelector('#trap-hex-modal-apply') as HTMLButtonElement | null;
+  hexModalApply?.addEventListener('click', () => {
+    if (!trapHexModalGuid || !hexModalInput) return;
+    const raw = hexModalInput.value.trim().toUpperCase();
+    if (!/^[0-9A-F]{2} [0-9A-F]{2}$/.test(raw)) {
+      hexModalInput.classList.add('trap-hex-modal-input--error');
+      setTimeout(() => hexModalInput.classList.remove('trap-hex-modal-input--error'), 1200);
+      return;
+    }
+    closeHexModal();
+    applyTrapByGuid(trapHexModalGuid, raw);
+  });
+  hexModalInput?.addEventListener('keydown', (e: KeyboardEvent) => {
+    if (e.key === 'Enter') hexModalApply?.click();
+    if (e.key === 'Escape') closeHexModal();
+  });
+
+  // B.A.S.E PREMIUM events
+  const baseInput = el.querySelector('#base-height-input') as HTMLInputElement | null;
+  if (baseInput) {
+    baseInput.addEventListener('input', () => {
+      const v = parseFloat(baseInput.value);
+      if (!isNaN(v)) baseCustomInput = v;
+    });
+  }
+
+  el.querySelector('#base-apply')?.addEventListener('click', () => applyBase());
+  el.querySelector('#base-revert')?.addEventListener('click', () => revertBase());
+
   const overlay = el.querySelector('#files-modal-overlay') as HTMLElement | null;
   const closeBtn = el.querySelector('#files-modal-close') as HTMLButtonElement | null;
   const copyBtn = el.querySelector('#files-modal-copy') as HTMLButtonElement | null;
@@ -1012,10 +1600,32 @@ function bindEvents(): void {
   });
 
   document.addEventListener('keydown', handleEsc);
+
+  // ── Info Modal ──────────────────────────────────────────────
+  const infoBtnEl = el.querySelector('#files-info-btn') as HTMLButtonElement | null;
+  infoBtnEl?.addEventListener('click', () => openInfoModal());
+
+  const infoCloseBtn = el.querySelector('#files-info-modal-close') as HTMLButtonElement | null;
+  infoCloseBtn?.addEventListener('click', () => closeInfoModal());
+
+  const infoOverlay = el.querySelector('#files-info-modal-overlay') as HTMLElement | null;
+  infoOverlay?.addEventListener('click', (e) => {
+    if ((e.target as HTMLElement).id === 'files-info-modal-overlay') closeInfoModal();
+  });
+
+  const goAutoresponderBtn = el.querySelector('#files-info-go-autoresponder') as HTMLButtonElement | null;
+  goAutoresponderBtn?.addEventListener('click', () => {
+    closeInfoModal();
+    const sidebarBtn = document.querySelector('.sidebar-btn[data-page-id="autoresponder"]') as HTMLElement | null;
+    sidebarBtn?.click();
+  });
 }
 
 function handleEsc(e: KeyboardEvent): void {
-  if (e.key === 'Escape') closeModal();
+  if (e.key === 'Escape') {
+    closeInfoModal();
+    closeModal();
+  }
 }
 
 // ─── World Info Actions ───────────────────────────────────────
@@ -1060,24 +1670,184 @@ async function downloadWorldInfo(): Promise<void> {
   }
 }
 
-function openPreview(): void {
-  if (!worldInfoData || !el) return;
-  activeModalData = worldInfoData;
+function openJsonPreview(data: any, title: string): void {
+  if (!data || !el) return;
+  activeModalData = data;
   const overlay = el.querySelector('#files-modal-overlay') as HTMLElement;
   const jsonPre = el.querySelector('#files-modal-json') as HTMLPreElement;
   const searchInput = el.querySelector('#files-modal-search-input') as HTMLInputElement;
+  const titleEl = el.querySelector('.files-modal-title') as HTMLElement | null;
   if (!overlay || !jsonPre) return;
 
-  const jsonStr = JSON.stringify(worldInfoData, null, 2);
+  if (titleEl) titleEl.textContent = title;
+  const jsonStr = JSON.stringify(data, null, 2);
   jsonPre.innerHTML = syntaxHighlight(jsonStr);
   overlay.style.display = 'flex';
   if (searchInput) searchInput.value = '';
+}
+
+function openPreview(): void {
+  if (!worldInfoData) return;
+  openJsonPreview(worldInfoData, 'World Info Preview');
 }
 
 function closeModal(): void {
   if (!el) return;
   const overlay = el.querySelector('#files-modal-overlay') as HTMLElement;
   if (overlay) overlay.style.display = 'none';
+}
+
+function openInfoModal(): void {
+  if (!el) return;
+  const overlay = el.querySelector('#files-info-modal-overlay') as HTMLElement;
+  if (overlay) overlay.style.display = 'flex';
+}
+
+function closeInfoModal(): void {
+  if (!el) return;
+  const overlay = el.querySelector('#files-info-modal-overlay') as HTMLElement;
+  if (overlay) overlay.style.display = 'none';
+}
+
+// ─── Dev Missions Actions ────────────────────────────────────
+
+async function loadDevMissions(): Promise<void> {
+  if (devMissionsLoading) return;
+  devMissionsLoading = true;
+  devMissionsError = null;
+  window.glowAPI.discordRpc.setDetail('Generating Dev Missions...');
+  draw();
+
+  try {
+    const result = await window.glowAPI.files.getDevMissions();
+    if (result.success) {
+      devMissionsData = result.data;
+      devMissionsStats = {
+        missions: result.missions ?? 0,
+        alerts: result.alerts ?? 0,
+        theaters: result.theaters ?? 0,
+        sizeMB: result.sizeMB ?? '0',
+      };
+      devMissionsError = null;
+    } else {
+      devMissionsError = result.error || 'Failed to generate dev missions';
+    }
+  } catch (err: any) {
+    devMissionsError = err.message || 'Unexpected error';
+  } finally {
+    devMissionsLoading = false;
+    window.glowAPI.discordRpc.setDetail(null);
+    draw();
+  }
+}
+
+async function downloadDevMissions(): Promise<void> {
+  if (!devMissionsData) return;
+  const jsonStr = JSON.stringify(devMissionsData, null, 2);
+  try {
+    await window.glowAPI.files.save(jsonStr, getDevMissionsFileName());
+  } catch {
+    // user cancelled or error — silent
+  }
+}
+
+function openDevMissionsPreview(): void {
+  if (!devMissionsData) return;
+  openJsonPreview(devMissionsData, 'Dev Missions Preview');
+}
+
+// ─── Funny File Actions ─────────────────────────────────────
+
+async function loadFunnyFile(): Promise<void> {
+  if (funnyLoading) return;
+  funnyLoading = true;
+  funnyError = null;
+  window.glowAPI.discordRpc.setDetail('Generating File...');
+  draw();
+
+  try {
+    const result = await window.glowAPI.files.getFunnyFile();
+    if (result.success) {
+      funnyData = result.data;
+      funnyStats = {
+        missions: result.missions ?? 0,
+        alerts: result.alerts ?? 0,
+        theaters: result.theaters ?? 0,
+        sizeMB: result.sizeMB ?? '0',
+      };
+      funnyError = null;
+    } else {
+      funnyError = result.error ?? 'Failed to generate file';
+    }
+  } catch (err: any) {
+    funnyError = err.message ?? 'Unexpected error';
+  } finally {
+    funnyLoading = false;
+    window.glowAPI.discordRpc.setDetail(null);
+    draw();
+  }
+}
+
+async function downloadFunnyFile(): Promise<void> {
+  if (!funnyData) return;
+  const jsonStr = JSON.stringify(funnyData, null, 2);
+  try {
+    await window.glowAPI.files.save(jsonStr, getFunnyFileName());
+  } catch {
+    // user cancelled or error — silent
+  }
+}
+
+function openFunnyFilePreview(): void {
+  if (!funnyData) return;
+  openJsonPreview(funnyData, 'Funny File Preview');
+}
+
+// ─── Dupe File Actions ─────────────────────────────────────
+
+async function loadDupeFile(): Promise<void> {
+  if (dupeLoading) return;
+  dupeLoading = true;
+  dupeError = null;
+  window.glowAPI.discordRpc.setDetail('Generating Dupe File...');
+  draw();
+
+  try {
+    const result = await window.glowAPI.files.getDupeFile();
+    if (result.success) {
+      dupeData = result.data;
+      dupeStats = {
+        missions: result.missions ?? 0,
+        alerts: result.alerts ?? 0,
+        theaters: result.theaters ?? 0,
+        sizeMB: result.sizeMB ?? '0',
+      };
+      dupeError = null;
+    } else {
+      dupeError = result.error || 'Failed to generate dupe file';
+    }
+  } catch (err: any) {
+    dupeError = err.message || 'Unexpected error';
+  } finally {
+    dupeLoading = false;
+    window.glowAPI.discordRpc.setDetail(null);
+    draw();
+  }
+}
+
+async function downloadDupeFile(): Promise<void> {
+  if (!dupeData) return;
+  const jsonStr = JSON.stringify(dupeData, null, 2);
+  try {
+    await window.glowAPI.files.save(jsonStr, getDupeFileName());
+  } catch {
+    // user cancelled or error — silent
+  }
+}
+
+function openDupeFilePreview(): void {
+  if (!dupeData) return;
+  openJsonPreview(dupeData, 'Dupe File Preview');
 }
 
 // ─── Worker Power Actions ─────────────────────────────────────
@@ -1125,16 +1895,7 @@ async function downloadWorkerPower(): Promise<void> {
 
 function openWpPreview(): void {
   if (!wpData || !el) return;
-  activeModalData = wpData;
-  const overlay = el.querySelector('#files-modal-overlay') as HTMLElement;
-  const jsonPre = el.querySelector('#files-modal-json') as HTMLPreElement;
-  const searchInput = el.querySelector('#files-modal-search-input') as HTMLInputElement;
-  if (!overlay || !jsonPre) return;
-
-  const jsonStr = JSON.stringify(wpData, null, 2);
-  jsonPre.innerHTML = syntaxHighlight(jsonStr);
-  overlay.style.display = 'flex';
-  if (searchInput) searchInput.value = '';
+  openJsonPreview(wpData, 'Worker Power Preview');
 }
 
 // ─── Dev Builds Actions ───────────────────────────────────────
@@ -1379,6 +2140,7 @@ async function loadTraps(): Promise<void> {
     trapHeightScale = heightData.scale;
     trapNamedConfigs = heightData.named;
     trapError = null;
+    await loadBaseStatus();
   } catch (err: any) {
     trapError = err.message || 'Failed to load trap data';
   } finally {
@@ -1495,6 +2257,68 @@ async function revertAllTraps(): Promise<void> {
     trapError = err.message || 'Unexpected error';
   } finally {
     trapLoading = false;
+    draw();
+  }
+}
+
+// ─── B.A.S.E PREMIUM Actions ──────────────────────────────────
+
+async function loadBaseStatus(): Promise<void> {
+  try {
+    const status = await window.glowAPI.files.baseHeightStatus();
+    baseFound = status.found;
+    baseIsModified = status.isModified;
+    baseCurrentHeight = status.currentHeight;
+    if (status.isModified) {
+      baseCustomInput = Math.round(heightHexToFloat(status.currentHeight) * 100) / 100;
+    }
+  } catch { /* ignore */ }
+}
+
+async function applyBase(): Promise<void> {
+  if (baseLoading) return;
+  baseLoading = true;
+  baseError = null;
+  draw();
+
+  try {
+    const hex = floatToHeightHex(baseCustomInput);
+    const result = await window.glowAPI.files.baseHeightApply(hex);
+    if (result.success) {
+      baseCurrentHeight = result.currentHeight || hex;
+      baseIsModified = true;
+      baseError = null;
+    } else {
+      baseError = result.message;
+    }
+  } catch (err: any) {
+    baseError = err?.message || 'Unexpected error';
+  } finally {
+    baseLoading = false;
+    draw();
+  }
+}
+
+async function revertBase(): Promise<void> {
+  if (baseLoading) return;
+  baseLoading = true;
+  baseError = null;
+  draw();
+
+  try {
+    const result = await window.glowAPI.files.baseHeightRevert();
+    if (result.success) {
+      baseCurrentHeight = '74 C2';
+      baseIsModified = false;
+      baseCustomInput = -61;
+      baseError = null;
+    } else {
+      baseError = result.message;
+    }
+  } catch (err: any) {
+    baseError = err?.message || 'Unexpected error';
+  } finally {
+    baseLoading = false;
     draw();
   }
 }

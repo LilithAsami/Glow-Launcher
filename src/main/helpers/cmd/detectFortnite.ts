@@ -15,11 +15,23 @@ import type { Storage } from '../../storage';
 
 const WIN64_SUFFIX = path.join('FortniteGame', 'Binaries', 'Win64');
 const LAUNCHER_EXE = 'FortniteLauncher.exe';
+const SHIPPING_EXE = 'FortniteClient-Win64-Shipping.exe';
+const PAKS_RELATIVE = path.join('..', '..', 'Content', 'Paks'); // Win64 → FortniteGame/Content/Paks
 
-/** Check that a directory contains FortniteLauncher.exe */
+/**
+ * Validate that a directory is a genuine Fortnite Win64 folder.
+ * Checks for:
+ *   1. FortniteLauncher.exe (the launcher stub)
+ *   2. FortniteClient-Win64-Shipping.exe (the actual game binary)
+ *   3. FortniteGame/Content/Paks directory exists (game assets)
+ */
 function isValidWin64(dir: string): boolean {
   try {
-    return fs.existsSync(path.join(dir, LAUNCHER_EXE));
+    if (!fs.existsSync(path.join(dir, LAUNCHER_EXE))) return false;
+    if (!fs.existsSync(path.join(dir, SHIPPING_EXE))) return false;
+    const paksDir = path.resolve(dir, PAKS_RELATIVE);
+    if (!fs.existsSync(paksDir) || !fs.statSync(paksDir).isDirectory()) return false;
+    return true;
   } catch {
     return false;
   }
@@ -29,7 +41,7 @@ function isValidWin64(dir: string): boolean {
  * Given any base path (root, FortniteGame dir, or Win64 itself),
  * return the Win64 path if FortniteLauncher.exe is found there.
  */
-function resolveToWin64(base: string): string | null {
+export function resolveToWin64(base: string): string | null {
   const candidates = [
     base,
     path.join(base, WIN64_SUFFIX),          // root → full path

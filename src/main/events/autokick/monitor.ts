@@ -19,7 +19,7 @@ import { BrowserWindow } from 'electron';
 import { Endpoints } from '../../helpers/endpoints';
 import { ANDROID_CLIENT, FORTNITE_CLIENT } from '../../helpers/auth/clients';
 import { refreshAccountToken } from '../../helpers/auth/tokenRefresh';
-import { isInSTWMission, getMCPMatchesPlayed, fetchPartyMeta, waitForMissionComplete } from '../../helpers/autokick/gameVerification';
+import { getMCPMatchesPlayed, fetchPartyMeta, waitForMissionComplete } from '../../helpers/autokick/gameVerification';
 import { processSTWRewards } from '../../helpers/autokick/rewardsProcessor';
 import { transferMaterials } from '../../helpers/autokick/materialsTransfer';
 import { PartyManager } from '../../managers/party/PartyManager';
@@ -46,6 +46,8 @@ const xmppConnections = new Map<string, Agent>();
 const backupIntervals = new Map<string, NodeJS.Timeout>();
 const liveTokens = new Map<string, string>();
 const intentionalDisconnects = new Set<string>(); // Prevent reconnect on user-initiated disconnect
+// cancelToken por cuenta — un nuevo PARTY_UPDATED sin PostMatchmaking lo cancela
+const missionCancellers = new Map<string, { cancelled: boolean }>();
 let storageRef: Storage | null = null;
 
 function send(channel: string, data: unknown): void {
@@ -226,6 +228,7 @@ async function createXMPPConnection(
 
   // ── Session started: enviar presencia para mantener conexión ──
   xmpp.on('session:started', () => {
+    console.log(`[AutoKick][XMPP][${displayName}] ✅ Session started — JID: ${accountId}@${serverUrl}`);
     send('autokick:log', { accountId, displayName, type: 'info', message: 'XMPP connected' });
 
     // Iniciar polling de respaldo cada 60s
@@ -235,6 +238,7 @@ async function createXMPPConnection(
   // ── Disconnected: reconectar solo si no fue intencional y cuenta sigue activa ──
   xmpp.on('disconnected', async () => {
     xmppConnections.delete(accountId);
+    console.log(`[AutoKick][XMPP][${displayName}] ⚠️  Disconnected (intentional: ${intentionalDisconnects.has(accountId)})`);
     send('autokick:log', { accountId, displayName, type: 'warn', message: 'XMPP disconnected' });
 
     // No reconectar si fue desconexión intencional (toggle off, cleanup)
@@ -276,7 +280,10 @@ async function createXMPPConnection(
   // ── PARTY_UPDATED listener en raw XML ──
   xmpp.on('raw:incoming', (rawXML: string) => {
     if (!rawXML.includes('<body>') || !rawXML.includes(PARTY_UPDATED_EVENT)) return;
-    
+
+    // Log completo solo cuando es PARTY_UPDATED
+    console.log(`[AutoKick][XMPP][${displayName}] ← PARTY_UPDATED RAW:\n${rawXML}`);
+
     const bodyMatch = rawXML.match(/<body[^>]*>(.*?)<\/body>/s);
     if (bodyMatch && bodyMatch[1]) {
       try {
@@ -296,8 +303,10 @@ async function createXMPPConnection(
     xmpp.once('session:started', () => { clearTimeout(timeout); resolve(); });
     xmpp.once('stream:error', (err: any) => {
       clearTimeout(timeout);
+      console.error(`[AutoKick][XMPP][${displayName}] ❌ Stream error:`, err);
       reject(new Error(`XMPP stream error: ${err}`));
     });
+    console.log(`[AutoKick][XMPP][${displayName}] 🔌 Connecting to wss://xmpp-service-${serverUrl} ...`);
     xmpp.connect();
   });
 
@@ -340,7 +349,8 @@ function startBackupPolling(storage: Storage, accountId: string, displayName: st
       const partyResult = await fetchPartyMeta(accountId, token, storage);
       if (partyResult.refreshedToken) liveTokens.set(accountId, partyResult.refreshedToken);
 
-      if (isInSTWMission(partyResult.meta)) {
+      // Usar Default:PartyState_s como gate (igual que en XMPP)
+      if (partyResult.meta['Default:PartyState_s'] === 'PostMatchmaking') {
         const accountData = await getStoredAccount(accountId);
         if (accountData) {
           handlePartyUpdate(storage, accountId, displayName, accountData, partyResult.meta).catch(() => {});
@@ -361,24 +371,35 @@ async function handlePartyUpdate(
   accountData: any,
   partyMeta: Partial<Record<string, string>> = {}
 ): Promise<void> {
-  // Evitar procesamiento duplicado
-  const existing = activeMonitoring.get(accountId);
-  if (existing && existing.processing) {
+  // ── Gate principal: Default:PartyState_s ──────────────────────────────────────
+  // PostMatchmaking  → jugador en misión STW activa → iniciar/mantener polling
+  // Cualquier otro  → fuera de misión → cancelar polling activo si lo hay
+  const partyState = partyMeta['Default:PartyState_s'] ?? null;
+  console.log(`[AutoKick][${displayName}] 📡 PARTY_UPDATED — PartyState_s: ${partyState ?? 'n/a'}`);
+
+  if (partyState !== 'PostMatchmaking') {
+    const cancelToken = missionCancellers.get(accountId);
+    if (cancelToken) {
+      cancelToken.cancelled = true;
+      missionCancellers.delete(accountId);
+      send('autokick:log', {
+        accountId, displayName, type: 'warn',
+        message: `Party left PostMatchmaking (${partyState ?? 'n/a'}) — mission polling cancelled`,
+      });
+    }
     return;
   }
 
-  // Marcar como procesando (crear entry si no existe)
+  // PostMatchmaking detectado — si ya hay polling activo no duplicar
+  if (activeMonitoring.get(accountId)?.processing) return;
+
   activeMonitoring.set(accountId, { processing: true, lastUpdate: Date.now() });
 
   try {
     const autoKickEntry = await getAutoKickData(storage);
     const config = autoKickEntry.accounts[accountId];
+    if (!config || !config.isActive) return;
 
-    if (!config || !config.isActive) {
-      return;
-    }
-
-    // Obtener token (refrescar si no hay)
     let token = liveTokens.get(accountId);
     if (!token) {
       token = await refreshAccountToken(storage, accountId);
@@ -389,45 +410,43 @@ async function handlePartyUpdate(
       liveTokens.set(accountId, token);
     }
 
-    // ── Leer matchmakingState del meta XMPP directamente (sin HTTP) ────────────────
-    if (!isInSTWMission(partyMeta)) {
-      return;
-    }
+    send('autokick:log', { accountId, displayName, type: 'info', message: 'PostMatchmaking detected — capturing matches_played baseline...' });
 
-    send('autokick:log', { accountId, displayName, type: 'info', message: 'STW mission detected — capturing baseline...' });
-
-    // ── Capturar baseline de matches_played via MCP ───────────────────────
     const mcpBaseline = await getMCPMatchesPlayed(accountId, token, storage);
-    if (mcpBaseline.refreshedToken) {
-      token = mcpBaseline.refreshedToken;
-      liveTokens.set(accountId, token);
-    }
+    if (mcpBaseline.refreshedToken) { token = mcpBaseline.refreshedToken; liveTokens.set(accountId, token); }
     const matchesPlayedBaseline = mcpBaseline.matchesPlayed;
 
     send('autokick:log', {
       accountId, displayName, type: 'info',
-      message: `Mission started (baseline matches_played: ${matchesPlayedBaseline}) — waiting for completion...`,
+      message: `Baseline: ${matchesPlayedBaseline} — polling for mission complete...`,
     });
 
-    // ── Esperar incremento de matches_played ─────────────────────────────
+    // Crear cancelToken y registrarlo — un PARTY_UPDATED sin PostMatchmaking lo cancelará
+    const cancelToken = { cancelled: false };
+    missionCancellers.set(accountId, cancelToken);
+
     const currentToken = token;
     const storedSettings = storageRef ? await storageRef.get<any>('settings') : null;
     const checkIntervalMs = storedSettings?.automationTimings?.autokickCheckMs ?? TIMING_CONFIG.MISSION_COMPLETE_CHECK_INTERVAL;
-    const completed = await waitForMissionComplete(
+
+    const result = await waitForMissionComplete(
       accountId,
       currentToken,
       storage,
       matchesPlayedBaseline,
+      cancelToken,
       checkIntervalMs
     );
-    if (!completed) {
-      send('autokick:log', { accountId, displayName, type: 'warn', message: 'Mission ended unexpectedly' });
+
+    missionCancellers.delete(accountId);
+
+    if (result !== 'completed') {
+      send('autokick:log', { accountId, displayName, type: 'warn', message: 'Mission polling cancelled (left mission)' });
       return;
     }
 
     send('autokick:log', { accountId, displayName, type: 'success', message: 'Mission completed!' });
 
-    // Refrescar token antes de acciones
     const freshToken = await refreshAccountToken(storage, accountId);
     if (freshToken) liveTokens.set(accountId, freshToken);
 
@@ -435,7 +454,6 @@ async function handlePartyUpdate(
   } catch (error: any) {
     send('autokick:log', { accountId, displayName, type: 'error', message: `Error: ${error?.message}` });
   } finally {
-    // Limpiar estado de procesamiento
     activeMonitoring.delete(accountId);
   }
 }
@@ -540,6 +558,10 @@ async function executeAutoKickActions(
 export async function disconnectAutoKick(accountId: string): Promise<void> {
   // Marcar como desconexión intencional ANTES de desconectar
   intentionalDisconnects.add(accountId);
+
+  // Cancelar polling de misión activo si existe
+  const cancelToken = missionCancellers.get(accountId);
+  if (cancelToken) { cancelToken.cancelled = true; missionCancellers.delete(accountId); }
 
   const xmpp = xmppConnections.get(accountId);
   if (xmpp) {

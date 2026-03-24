@@ -218,6 +218,9 @@ const ACCOUNT_RESOURCE_ICONS: Record<string, string> = {
   reagent_c_t02: 'assets/icons/stw/resources/reagent_c_t02.png',
   reagent_c_t03: 'assets/icons/stw/resources/reagent_c_t03.png',
   reagent_c_t04: 'assets/icons/stw/resources/reagent_c_t04.png',
+  reagent_evolverarity_sr: 'assets/icons/stw/resources/reagent_evolverarity_sr.png',
+  reagent_evolverarity_vr: 'assets/icons/stw/resources/reagent_evolverarity_vr.png',
+  reagent_evolverarity_r: 'assets/icons/stw/resources/reagent_evolverarity_r.png',
   reagent_people: 'assets/icons/stw/resources/reagent_people.png',
   reagent_weapons: 'assets/icons/stw/resources/reagent_weapons.png',
   reagent_traps: 'assets/icons/stw/resources/reagent_traps.png',
@@ -233,7 +236,7 @@ const ACCOUNT_RESOURCE_ICONS: Record<string, string> = {
   eventcurrency_spring: 'assets/icons/stw/currency/eventcurrency_spring.png',
   eventcurrency_summer: 'assets/icons/stw/currency/eventcurrency_summer.png',
   campaign_event_currency: 'assets/icons/stw/currency/campaign_event_currency.gif',
-  currency_xrayllama: 'assets/icons/stw/resources/currency_xrayllama.png',
+  currency_xrayllama: 'assets/icons/stw/resources/currency_mtxswap.png',
 };
 
 const INGREDIENT_ICONS: Record<string, string> = {
@@ -337,6 +340,7 @@ export function getResourceIcon(itemType: string, translatedName: string): strin
   }
   // Token
   if (tipo.includes('token:')) {
+    if (tipo.includes('accountinventorybonus')) return 'assets/icons/stw/resources/armory_slot.png';
     return null;
   }
 

@@ -664,3 +664,146 @@ export async function getModifiedTraps(storage: Storage): Promise<{ guid: string
     };
   });
 }
+
+// ── B.A.S.E Pattern-Based Patching ──────────────────────────
+
+const BASE_PREFIX = Buffer.from([0x05, 0x30, 0x00, 0x12]);
+const BASE_SUFFIX = Buffer.from([
+  0x0F, 0x00, 0x42, 0x01, 0x01, 0x1F, 0x00, 0x00, 0x5F, 0x00,
+  0xF2, 0x06, 0x00, 0xB1, 0xF0, 0x05, 0x18, 0x00, 0x31, 0x03, 0x23,
+]);
+const BASE_PATTERN_LEN = BASE_PREFIX.length + 2 + BASE_SUFFIX.length; // 27
+const BASE_DEFAULT_HEIGHT = '74 C2';
+
+interface BasePatchState {
+  patternPos: number;
+  originalHeight: string;
+  currentHeight: string;
+}
+
+function findBasePatternInFile(filePath: string): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const fd = fs.openSync(filePath, 'r');
+    const buf = Buffer.alloc(CHUNK_SIZE + BASE_PATTERN_LEN);
+    let fileOffset = 0;
+    let carry = 0;
+
+    const read = () => {
+      const bytesRead = fs.readSync(fd, buf, carry, CHUNK_SIZE, fileOffset);
+      if (bytesRead === 0) {
+        if (carry > 0) {
+          for (let i = 0; i <= carry - BASE_PATTERN_LEN; i++) {
+            if (matchBasePattern(buf, i)) {
+              fs.closeSync(fd);
+              return resolve(fileOffset - carry + i);
+            }
+          }
+        }
+        fs.closeSync(fd);
+        return resolve(-1);
+      }
+
+      const total = carry + bytesRead;
+      for (let i = 0; i <= total - BASE_PATTERN_LEN; i++) {
+        if (matchBasePattern(buf, i)) {
+          fs.closeSync(fd);
+          return resolve(fileOffset - carry + i);
+        }
+      }
+
+      if (total > BASE_PATTERN_LEN) {
+        buf.copy(buf, 0, total - BASE_PATTERN_LEN, total);
+        carry = BASE_PATTERN_LEN;
+      } else {
+        carry = total;
+      }
+
+      fileOffset += bytesRead;
+      setImmediate(read);
+    };
+
+    try { read(); } catch (err) {
+      try { fs.closeSync(fd); } catch {}
+      reject(err);
+    }
+  });
+}
+
+function matchBasePattern(buf: Buffer, offset: number): boolean {
+  for (let j = 0; j < BASE_PREFIX.length; j++) {
+    if (buf[offset + j] !== BASE_PREFIX[j]) return false;
+  }
+  const suffixStart = offset + BASE_PREFIX.length + 2;
+  for (let j = 0; j < BASE_SUFFIX.length; j++) {
+    if (buf[suffixStart + j] !== BASE_SUFFIX[j]) return false;
+  }
+  return true;
+}
+
+export async function getBaseStatus(storage: Storage): Promise<{ found: boolean; isModified: boolean; currentHeight: string; error?: string }> {
+  const state = await storage.get<BasePatchState>('basePatch');
+  if (state) {
+    return { found: true, isModified: state.currentHeight !== state.originalHeight, currentHeight: state.currentHeight };
+  }
+  return { found: false, isModified: false, currentHeight: BASE_DEFAULT_HEIGHT };
+}
+
+export async function applyBaseHeight(storage: Storage, newHeight: string): Promise<TrapHeightResult> {
+  const filePath = await resolveUcasPath(storage);
+  if (!filePath) {
+    return { success: false, message: `${CHUNK_FILE} not found.\nCheck your Fortnite path in Settings.` };
+  }
+
+  let state = await storage.get<BasePatchState>('basePatch');
+
+  try {
+    if (!state) {
+      const patternPos = await findBasePatternInFile(filePath);
+      if (patternPos < 0) {
+        return { success: false, message: 'B.A.S.E pattern not found in pakchunk11.' };
+      }
+
+      const heightPos = patternPos + BASE_PREFIX.length;
+      const [b0, b1] = readBytes(filePath, heightPos);
+      const originalHex = b0.toString(16).padStart(2, '0').toUpperCase() + ' ' +
+                          b1.toString(16).padStart(2, '0').toUpperCase();
+
+      state = { patternPos, originalHeight: originalHex, currentHeight: originalHex };
+    }
+
+    const heightPos = state.patternPos + BASE_PREFIX.length;
+    const [h0, h1] = parseHex(newHeight);
+    patchBytes(filePath, heightPos, h0, h1);
+
+    state.currentHeight = newHeight;
+    await storage.set('basePatch', state);
+
+    return { success: true, message: `B.A.S.E height set to ${newHeight}`, currentHeight: newHeight, isModified: true };
+  } catch (err: any) {
+    return { success: false, message: `B.A.S.E patch failed: ${err.message}` };
+  }
+}
+
+export async function revertBaseHeight(storage: Storage): Promise<TrapHeightResult> {
+  const filePath = await resolveUcasPath(storage);
+  if (!filePath) {
+    return { success: false, message: `${CHUNK_FILE} not found.\nCheck your Fortnite path in Settings.` };
+  }
+
+  const state = await storage.get<BasePatchState>('basePatch');
+  if (!state) {
+    return { success: false, message: 'No B.A.S.E modification found.' };
+  }
+
+  try {
+    const heightPos = state.patternPos + BASE_PREFIX.length;
+    const [h0, h1] = parseHex(state.originalHeight);
+    patchBytes(filePath, heightPos, h0, h1);
+
+    await storage.set('basePatch', undefined);
+
+    return { success: true, message: `B.A.S.E height restored to ${state.originalHeight}` };
+  } catch (err: any) {
+    return { success: false, message: `B.A.S.E revert failed: ${err.message}` };
+  }
+}
