@@ -7,6 +7,8 @@ import { homePage, prefetchWorldInfo } from './pages/home';
 import { tryShowTutorial } from './core/tutorial';
 import { initThemeOnStartup, clearTheme, loadThemeSettings, saveThemeSettings } from './utils/themes';
 import { checkAndShowUpdateModal } from './utils/updater';
+import { isPotatoMode, setPotatoMode, initPotatoMode, renderPotatoGrid } from './core/potato';
+import type { PageDefinition } from '../shared/types';
 
 const router = new Router();
 
@@ -24,8 +26,9 @@ document.addEventListener('keydown', async (e) => {
 
 document.addEventListener('DOMContentLoaded', async () => {
   // Apply minimalist mode early so layout doesn't flash
-  const savedSettings = await window.glowAPI.storage.get<{ minimalist?: boolean }>('settings');
-  if (savedSettings?.minimalist) document.body.classList.add('minimalist');
+  const savedSettings = await window.glowAPI.storage.get<{ minimalist?: boolean; potatoStyle?: boolean }>('settings');
+  if (savedSettings?.minimalist && !savedSettings?.potatoStyle) document.body.classList.add('minimalist');
+  if (savedSettings?.potatoStyle) setPotatoMode(true);
 
   // Apply saved theme before UI renders
   await initThemeOnStartup();
@@ -33,7 +36,26 @@ document.addEventListener('DOMContentLoaded', async () => {
   initHeader();
   initToolbar(router);
   await initSidebar(sidebarGroups, pages, router);
-  router.init([homePage, ...pages, ...hiddenPages]);
+
+  // Wrap home page to show potato grid when potato mode is active
+  const wrappedHome: PageDefinition = {
+    ...homePage,
+    render: async (container) => {
+      if (isPotatoMode()) {
+        renderPotatoGrid(container, router);
+      } else {
+        await homePage.render(container);
+      }
+    },
+    cleanup: () => {
+      if (!isPotatoMode()) {
+        homePage.cleanup?.();
+      }
+    },
+  };
+
+  initPotatoMode(router);
+  router.init([wrappedHome, ...pages, ...hiddenPages]);
 
   // Pre-fetch world info at startup so home page loads instantly
   prefetchWorldInfo();

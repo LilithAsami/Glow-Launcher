@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import type { Storage } from './storage';
 import * as auth from './helpers/auth/auth';
-import { importFromOtherLaunchers } from './helpers/auth/importAccounts';
+import { importFromOtherLaunchers, importFromGlowJson } from './helpers/auth/importAccounts';
 import * as autokick from './events/autokick/monitor';
 import * as security from './helpers/auth/security';
 import * as alerts from './helpers/stw/alerts';
@@ -24,7 +24,7 @@ import axios from 'axios';
 import { refreshAccountToken, authenticatedRequest, validateAllTokens } from './helpers/auth/tokenRefresh';
 import { Endpoints } from './helpers/endpoints';
 import { launchGame } from './helpers/cmd/launcher';
-import { detectFortnitePath } from './helpers/cmd/detectFortnite';
+import { detectFortnitePath, resolveToWin64 } from './helpers/cmd/detectFortnite';
 import * as devbuilds from './helpers/cmd/devbuilds';
 import * as devstairs from './helpers/cmd/devstairs';
 import * as airstrike from './helpers/cmd/airstrike';
@@ -41,6 +41,7 @@ import * as redeemcodes from './helpers/cmd/redeemcodes';
 import * as lookup from './helpers/epic/lookup';
 import * as xpboosts from './helpers/cmd/xpboosts';
 import * as quests from './helpers/stw/quests';
+import * as stwExchange from './helpers/stw/stwExchange';
 import * as autodaily from './events/autodaily/autodaily';
 import * as autoresponder from './managers/autoresponder';
 import * as shop from './managers/shop/ShopManager';
@@ -151,6 +152,43 @@ export function registerIpcHandlers(
       });
     }
     return result;
+  });
+
+  ipcMain.handle('accounts:import-glow-json', async () => {
+    const { filePaths, canceled } = await dialog.showOpenDialog({
+      title: 'Import GLOW Accounts JSON',
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+      properties: ['openFile'],
+    });
+    if (canceled || !filePaths[0]) return { results: [], cancelled: true };
+
+    const result = await importFromGlowJson(storage, filePaths[0]);
+    const added = result.results.filter((r) => r.status === 'added').length;
+    const skipped = result.results.filter((r) => r.status === 'existing').length;
+
+    if (added > 0 || skipped > 0) {
+      setImmediate(() => {
+        BrowserWindow.getAllWindows()[0]?.webContents.send('accounts:data-changed');
+        const parts = [];
+        if (added > 0) parts.push(`${added} added`);
+        if (skipped > 0) parts.push(`${skipped} skipped (already in GLOW)`);
+        notificationManager.push('general', 'Import GLOW JSON', parts.join(' · '));
+      });
+    }
+
+    return result;
+  });
+
+  ipcMain.handle('accounts:export', async () => {
+    const data = await auth.getAccountsData(storage);
+    const { filePath, canceled } = await dialog.showSaveDialog({
+      title: 'Export Accounts',
+      defaultPath: `glow-accounts-${new Date().toISOString().slice(0, 10)}.json`,
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+    });
+    if (canceled || !filePath) return { success: false, cancelled: true };
+    fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
+    return { success: true, filePath };
   });
 
   ipcMain.handle('accounts:remove', (_e, id: string) => {
@@ -359,6 +397,11 @@ export function registerIpcHandlers(
   });
 
   // ── Settings helpers ────────────────────────────────────────
+  ipcMain.handle('settings:validate-fortnite-path', (_e, rawPath: string) => {
+    const resolved = resolveToWin64(rawPath);
+    return { valid: !!resolved, path: resolved };
+  });
+
   ipcMain.handle('settings:detect-fortnite-path', async (_e) => {
     try {
       const detected = detectFortnitePath();
@@ -407,9 +450,38 @@ export function registerIpcHandlers(
     return alerts.getCompletedAlerts(storage);
   });
 
+  // ── STW Exchange ───────────────────────────────────────────
+  ipcMain.handle('stw-exchange:get-data', () => {
+    return stwExchange.getSTWExchange(storage);
+  });
+
+  ipcMain.handle('stw-exchange:get-data-force', () => {
+    return stwExchange.getSTWExchange(storage, true);
+  });
+
+  ipcMain.handle('stw-exchange:get-gold', () => {
+    return stwExchange.getGoldBalance(storage);
+  });
+
+  ipcMain.handle('stw-exchange:buy', (_e: any, offerId: string, price: number, quantity: number, currencyType: string, currencySubType: string) => {
+    return stwExchange.purchaseSTWItem(storage, offerId, price, quantity, currencyType, currencySubType);
+  });
+
   // ── Files ──────────────────────────────────────────────────
   ipcMain.handle('files:get-worldinfo', async () => {
     return worldinfo.getWorldInfo(storage);
+  });
+
+  ipcMain.handle('files:get-devmissions', async () => {
+    return worldinfo.getDevMissionsWorldInfo(storage);
+  });
+
+  ipcMain.handle('files:get-funnyfile', async () => {
+    return worldinfo.getFunnyWorldInfo(storage);
+  });
+
+  ipcMain.handle('files:get-dupefile', async () => {
+    return worldinfo.getDupeFileWorldInfo(storage);
   });
 
   ipcMain.handle('files:worker-power', async (_e, targetLevel: number) => {
@@ -493,6 +565,19 @@ export function registerIpcHandlers(
 
   ipcMain.handle('files:trapheight-height-data', async () => {
     return trapheight.getHeightData();
+  });
+
+  // ── B.A.S.E Height ─────────────────────────────────────────
+  ipcMain.handle('files:base-height-status', async () => {
+    return trapheight.getBaseStatus(storage);
+  });
+
+  ipcMain.handle('files:base-height-apply', async (_e, newHeight: string) => {
+    return trapheight.applyBaseHeight(storage, newHeight);
+  });
+
+  ipcMain.handle('files:base-height-revert', async () => {
+    return trapheight.revertBaseHeight(storage);
   });
 
   // ── FOV Patcher ────────────────────────────────────────────
@@ -728,6 +813,10 @@ export function registerIpcHandlers(
 
   ipcMain.handle('ghostequip:set-level', async (_e, level: number) => {
     return ghostequip.setLevel(storage, level);
+  });
+
+  ipcMain.handle('ghostequip:set-power-level', async (_e, powerLevel: number) => {
+    return ghostequip.setPowerLevel(storage, powerLevel);
   });
 
   // ── Friends ────────────────────────────────────────────────

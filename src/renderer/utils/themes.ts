@@ -546,8 +546,8 @@ html, body { background: transparent !important; }
 
 /**
  * Parse a BetterDiscord .theme.css / .css / raw CSS string.
- * Supports standard BD variables, ClearVision variables, DarkMatter variables,
- * and extracts background image / filter / opacity settings.
+ * Supports standard BD variables, ClearVision, DarkMatter, NFLD99,
+ * FrostedGlass, vsthemes.org generator, and any generic Discord theme CSS.
  */
 export function parseBetterDiscordCSS(css: string): GlowTheme {
   const meta: Record<string, string> = {};
@@ -562,7 +562,23 @@ export function parseBetterDiscordCSS(css: string): GlowTheme {
     }
   }
 
-  // Map common BD / ClearVision / DarkMatter variables → GLOW variables
+  // Also try single-line /* @name ... */ pattern
+  if (!meta.name) {
+    const singleMeta = css.match(/\/\*[\s\S]*?\*\//);
+    if (singleMeta) {
+      const lines = singleMeta[0].split('\n');
+      for (const line of lines) {
+        const m = line.match(/@(\w+)\s+(.+)/);
+        if (m && !meta[m[1].toLowerCase()]) {
+          meta[m[1].toLowerCase()] = m[2].trim().replace(/\*\/\s*$/, '').trim();
+        }
+      }
+    }
+  }
+
+  // ── Variable maps ──────────────────────────────────────────
+
+  // Standard BetterDiscord / ClearVision / DarkMatter → GLOW
   const BD_TO_GLOW: Record<string, string> = {
     // Standard BetterDiscord
     'background-primary': 'bg-primary',
@@ -597,9 +613,28 @@ export function parseBetterDiscordCSS(css: string): GlowTheme {
     'background-solid': 'bg-primary',
     'background-solid-dark': 'bg-base',
     'background-solid-darker': 'bg-base',
+    // NFLD99 / NFLD Inc themes
+    'Main-Colour': 'accent',
+    'Background-Colour': 'bg-base',
+    'Secondary-Background-Colour': 'bg-secondary',
+    'Secondary-Main-Colour': 'accent-hover',
+    'Notification-Colour': 'accent',
+    'Scroller-Colour': 'accent',
+    'Text-Shadow-Colour': 'text-muted',
+    'Chat-Input-Colour': 'accent',
+    'Settings-Dock-Colour': 'accent',
+    'Timestamp-Colour': 'text-secondary',
+    'Popout-Main-Colour': 'accent',
+    // vsthemes.org generator (BasicBackground)
+    'accentcolor': 'accent',
+    'transparencycolor': 'bg-base',
+    // FrostedGlass themes
+    'gradient-primary': 'bg-base',
+    'gradient-secondary': 'accent',
+    'tint-colour': 'accent',
+    'link-colour': 'accent',
   };
 
-  // Text color map for ClearVision
   const BD_TEXT_MAP: Record<string, string> = {
     'normal-text': 'text-primary',
     'normal-text-hover': 'text-primary',
@@ -616,35 +651,78 @@ export function parseBetterDiscordCSS(css: string): GlowTheme {
   let hasFilters = false;
   let hasOpacity = false;
 
-  // Extract all --variable: value from any block
+  // ── Helper: normalize a CSS value to something usable ──────
+  function normalizeColorValue(value: string): string {
+    // RGB tuple "R, G, B" → rgb(R, G, B)
+    if (/^\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}$/.test(value)) {
+      return `rgb(${value})`;
+    }
+    // RGB tuple with semicolons "R; G; B" → rgb(R, G, B)
+    if (/^\d{1,3}\s*;\s*\d{1,3}\s*;\s*\d{1,3}$/.test(value)) {
+      return `rgb(${value.replace(/;/g, ',')})`;
+    }
+    return value;
+  }
+
+  // ── Helper: extract URL from value that may contain url() ──
+  function extractUrl(value: string): string | null {
+    const urlMatch = value.match(/url\(\s*['"]?([^'")\s]+)['"]?\s*\)/);
+    return urlMatch?.[1] || null;
+  }
+
+  // ── Extract all --variable: value from any block ───────────
   const varRegex = /--([a-zA-Z0-9_-]+)\s*:\s*([^;!}]+)/g;
   let match: RegExpExecArray | null;
   while ((match = varRegex.exec(css)) !== null) {
     const varName = match[1].trim();
     let value = match[2].trim();
 
-    // Handle RGB tuple format like "37, 172, 232" → convert to rgb()
-    if (/^\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}$/.test(value)) {
-      value = `rgb(${value})`;
-    }
+    // Normalize RGB tuples
+    value = normalizeColorValue(value);
 
-    // Background image
-    if (varName === 'background-image') {
-      // Extract URL from url('...') or url("...")
-      const urlMatch = value.match(/url\(\s*['"]?([^'")\s]+)['"]?\s*\)/);
-      if (urlMatch && urlMatch[1]) {
-        background.image = urlMatch[1];
-        hasBackground = true;
+    // ── Background image from various variable names ─────────
+    // Matches: --background-image, --background, --Chat-Background,
+    //          --Settings-Background, --Callout-Background,
+    //          --Popout-Background, --popout-modal-image
+    if (
+      varName === 'background-image' ||
+      varName === 'background' ||
+      varName === 'Chat-Background' ||
+      varName === 'Settings-Background' ||
+      varName === 'Callout-Background' ||
+      varName === 'Popout-Background' ||
+      varName === 'popout-modal-image'
+    ) {
+      if (!hasBackground) {
+        const url = extractUrl(value);
+        if (url) {
+          background.image = url;
+          hasBackground = true;
+        }
       }
+      // Don't add to colors, skip
       continue;
     }
 
-    // Background position/size/attachment
-    if (varName === 'background-position') { background.position = value; hasBackground = true; continue; }
+    // ── Background sub-properties ────────────────────────────
+    // FrostedGlass: --background-image-blur, --background-image-size, --background-image-position
+    if (varName === 'background-image-blur' || varName === 'backgroundblur' || varName === 'popoutblur') {
+      const px = parseInt(value);
+      if (!isNaN(px) && px > 0) { filters.blur = px; hasFilters = true; }
+      continue;
+    }
+    if (varName === 'background-image-size' || varName === 'backgroundsize') {
+      background.size = value; hasBackground = true;
+      continue;
+    }
+    if (varName === 'background-image-position' || varName === 'background-position') {
+      background.position = value; hasBackground = true;
+      continue;
+    }
     if (varName === 'background-size') { background.size = value; hasBackground = true; continue; }
     if (varName === 'background-attachment') { background.attachment = value; hasBackground = true; continue; }
 
-    // Background filter (ClearVision: "blur(12px) saturate(120%)")
+    // ── Background filter (ClearVision compound) ─────────────
     if (varName === 'background-filter') {
       const blurM = value.match(/blur\((\d+)px\)/);
       const satM = value.match(/saturate\((\d+)%?\)/);
@@ -657,11 +735,61 @@ export function parseBetterDiscordCSS(css: string): GlowTheme {
       continue;
     }
 
-    // Shading / opacity values (ClearVision: --background-shading: 100%)
+    // ── Brightness / darkness → opacity/filters ──────────────
+    // NFLD99: --Background-Darkness: 0.43 (0=transparent, 1=fully dark)
+    if (varName === 'Background-Darkness') {
+      const darkness = parseFloat(value);
+      if (!isNaN(darkness)) {
+        // Map darkness (0-1) to content opacity (0-100). Higher darkness = more opaque overlay
+        const opacityPct = Math.round(Math.max(0, Math.min(1, darkness)) * 100);
+        opacity.content = opacityPct;
+        opacity.sidebar = Math.min(100, opacityPct + 15);
+        hasOpacity = true;
+      }
+      continue;
+    }
+    // FrostedGlass: --serverlist-brightness, --left-brightness, --middle-brightness, --right-brightness
+    if (varName === 'middle-brightness' || varName === 'serverlist-brightness') {
+      const br = parseFloat(value);
+      if (!isNaN(br)) {
+        opacity.content = Math.round(Math.max(0, Math.min(1, br)) * 100);
+        hasOpacity = true;
+      }
+      continue;
+    }
+    if (varName === 'left-brightness') {
+      const br = parseFloat(value);
+      if (!isNaN(br)) {
+        opacity.sidebar = Math.round(Math.max(0, Math.min(1, br)) * 100);
+        hasOpacity = true;
+      }
+      continue;
+    }
+    if (varName === 'right-brightness') {
+      continue; // acknowledged but not directly mapped (member list)
+    }
+    if (varName === 'popout-modal-brightness') {
+      continue; // acknowledged
+    }
+
+    // vsthemes.org generator: --transparencyalpha (0-1), --messagetransparency, etc.
+    if (varName === 'transparencyalpha') {
+      const alpha = parseFloat(value);
+      if (!isNaN(alpha)) {
+        opacity.content = Math.round(Math.max(0, Math.min(1, alpha)) * 100);
+        opacity.sidebar = Math.round(Math.max(0, Math.min(1, alpha)) * 100);
+        hasOpacity = true;
+      }
+      continue;
+    }
+    if (varName === 'messagetransparency' || varName === 'guildchanneltransparency' || varName === 'memberlistransparency') {
+      continue; // acknowledged
+    }
+
+    // ClearVision: --background-shading
     if (varName === 'background-shading') {
       const pct = parseInt(value);
       if (!isNaN(pct)) {
-        // BD shading is inverted — 100% means fully dark overlay, map to our opacity
         opacity.content = Math.max(0, Math.min(100, pct));
         opacity.sidebar = Math.max(0, Math.min(100, pct));
         hasOpacity = true;
@@ -669,32 +797,60 @@ export function parseBetterDiscordCSS(css: string): GlowTheme {
       continue;
     }
     if (varName === 'card-shading' || varName === 'popout-shading' || varName === 'modal-shading') {
-      continue; // acknowledged but not directly mapped
+      continue;
     }
 
-    // Text colors
+    // vsthemes.org: --backdrop: rgba(0,0,0,0.2) → skip
+    if (varName === 'backdrop') { continue; }
+
+    // FrostedGlass: --window-padding, --window-roundness, --scrollbar-colour
+    // FrostedGlass: --home-button-image, --home-button-size, --home-button-position → skip
+    // FrostedGlass: --show-gift-gif-buttons, --update-notice-1, --font → skip
+    // FrostedGlass: --HSL-*, --rs-* → skip
+    if (
+      varName.startsWith('HSL-') || varName.startsWith('rs-') ||
+      varName === 'window-padding' || varName === 'window-roundness' ||
+      varName === 'scrollbar-colour' || varName === 'font' ||
+      varName === 'show-gift-gif-buttons' || varName === 'update-notice-1' ||
+      varName === 'home-button-image' || varName === 'home-button-size' ||
+      varName === 'home-button-position' || varName === 'popout-modal-size' ||
+      varName === 'popout-modal-position' || varName === 'popout-modal-blur' ||
+      varName.startsWith('load') || varName.startsWith('File-Updated') ||
+      varName.startsWith('Theme-Variant') || varName.startsWith('Unread-Message') ||
+      varName === 'Chat-Font-Used' || varName === 'Chat-Font-Size' ||
+      varName === 'Guild-Columns' || varName === 'ServerFolders-Guild-Columns' ||
+      varName === 'Chat-Avatar-Border-Radius' || varName === 'Chat-Input-Background' ||
+      varName === 'Emote-Popout-Background' ||
+      varName === 'version1_0_5' || varName === 'gradient-direction' ||
+      varName === 'tint-brightness' || varName === 'rs-phone-visible' ||
+      varName === 'popoutblur' || varName === 'backdropblur' ||
+      varName === 'popoutsize' || varName === 'backdropsize'
+    ) {
+      continue;
+    }
+
+    // ── Text colors ──────────────────────────────────────────
     const textKey = BD_TEXT_MAP[varName];
     if (textKey) {
       colors[textKey] = value;
       continue;
     }
 
-    // Check if it maps to a GLOW variable
+    // ── Check if it maps to a GLOW variable ──────────────────
     const glowKey = BD_TO_GLOW[varName];
     if (glowKey) {
-      // For 'accent' mapped from 'main-color': ClearVision uses bare hex like #2780e6
       colors[glowKey] = value;
     }
-    // Also check if it's already a GLOW variable name
+    // Also check if it's already a native GLOW variable name
     if (THEME_VARIABLES.some((v) => v.key === varName)) {
       colors[varName] = value;
     }
   }
 
-  // Generate accent variants from main accent if we have one
+  // ── Generate accent variants from main accent ──────────────
   if (colors['accent'] && !colors['accent-glow']) {
     const hex = colors['accent'];
-    const rgb = hexToRgbTuple(hex);
+    const rgb = hexToRgbTuple(hex) || cssColorToRgb(hex);
     if (rgb) {
       colors['accent-glow'] = `rgba(${rgb}, 0.30)`;
       if (!colors['accent-hover']) colors['accent-hover'] = lightenHex(hex, 20);
@@ -703,36 +859,58 @@ export function parseBetterDiscordCSS(css: string): GlowTheme {
     }
   }
 
-  // Scan CSS rules for background-image: url(...) on app/body/root-like selectors
+  // ── Generate bg variants from bg-base if we only have bg-base ──
+  if (colors['bg-base'] && !colors['bg-primary']) {
+    const baseRgb = cssColorToRgb(colors['bg-base']);
+    if (baseRgb) {
+      const [r, g, b] = baseRgb.split(',').map(v => parseInt(v.trim()));
+      const lighter = (amt: number) => `rgb(${Math.min(255, r + amt)}, ${Math.min(255, g + amt)}, ${Math.min(255, b + amt)})`;
+      colors['bg-primary'] = lighter(6);
+      colors['bg-secondary'] = lighter(12);
+      colors['bg-tertiary'] = lighter(18);
+      colors['bg-elevated'] = lighter(24);
+      colors['bg-hover'] = lighter(30);
+      colors['bg-active'] = lighter(36);
+    }
+  }
+
+  // ── Scan CSS rules for background-image: url(...) as fallback ──
   if (!hasBackground) {
     const bgImgRule = css.match(/[{;]\s*background-image\s*:\s*url\(\s*['"]?([^'")\s]+)['"]?\s*\)/i)
       || css.match(/[{;]\s*background\s*:[^;]*url\(\s*['"]?([^'")\s]+)['"]?\s*\)/i);
     if (bgImgRule && bgImgRule[1]) {
       background.image = bgImgRule[1];
       hasBackground = true;
-      // Try to find background-size in same CSS
       const sizeMatch = css.match(/background-size\s*:\s*([^;]+)/i);
       if (sizeMatch) background.size = sizeMatch[1].trim();
     }
   }
 
-  // Strip variable blocks but keep other rules as customCSS
+  // ── Strip variable blocks but keep other rules as customCSS ──
   const stripped = css
-    .replace(/\/\*\*[\s\S]*?\*\//g, '') // remove meta block
-    .replace(/:root\s*\{[^}]*\}/g, '')  // remove :root blocks
-    .replace(/\[data-theme[^\]]*\]\s*\{[^}]*\}/g, '') // remove data-theme blocks
-    .replace(/@import\s+url\([^)]*\)\s*;?/g, '') // remove @import (we handle inline)
+    .replace(/\/\*\*[\s\S]*?\*\//g, '')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/:root\s*\{[^}]*\}/g, '')
+    .replace(/\[data-theme[^\]]*\]\s*\{[^}]*\}/g, '')
+    .replace(/@import\s+url\([^)]*\)\s*;?/g, '')
+    .replace(/@import\s+url\s*\([^)]*\)\s*;?/g, '')
     .trim();
 
   if (stripped.length > 10) {
     customCSS = stripped;
   }
 
+  // Sanitize the theme name — remove control characters, limit length
+  let themeName = meta.name || 'Imported Theme';
+  themeName = themeName.replace(/[\x00-\x1F\x7F]/g, '').trim();
+  if (!themeName) themeName = 'Imported Theme';
+  if (themeName.length > 100) themeName = themeName.substring(0, 100);
+
   return {
-    name: meta.name || 'Imported Theme',
-    author: meta.author || 'Unknown',
+    name: themeName,
+    author: (meta.author || 'Unknown').replace(/[\x00-\x1F\x7F]/g, '').trim() || 'Unknown',
     version: meta.version || '1.0',
-    description: meta.description || 'Imported from BetterDiscord CSS',
+    description: meta.description || 'Imported from CSS',
     colors,
     background: hasBackground ? background : undefined,
     filters: hasFilters ? filters : undefined,

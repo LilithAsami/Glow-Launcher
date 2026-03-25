@@ -1,7 +1,7 @@
 /**
  * TaxiManager — Fortnite Taxi Bot System for GLOW Launcher
  *
- * Manages fnbr client instances per account. Handles:
+ * Manages EpicClient instances per account. Handles:
  * - Friend request acceptance (public/private + whitelist)
  * - Party invite acceptance with queue system
  * - Cosmetic/stats configuration
@@ -11,13 +11,13 @@
  * Storage: taxi.json in %AppData%/glow-launcher/data/
  */
 
-import { Client } from 'fnbr';
 import { BrowserWindow } from 'electron';
 import axios from 'axios';
 import type { Storage } from '../../storage';
 import type { AccountsData, StoredAccount } from '../../../shared/types';
 import { refreshAccountToken, authenticatedRequest } from '../../helpers/auth/tokenRefresh';
 import { Endpoints } from '../../helpers/endpoints';
+import { EpicClient } from './utils/EpicClient';
 
 // ── Types ───────────────────────────────────────────────────
 
@@ -172,7 +172,7 @@ export function defaultTaxiConfig(): TaxiAccountConfig {
 // ── Client instance wrapper ─────────────────────────────────
 
 interface TaxiClientInstance {
-  client: any;
+  client: EpicClient;
   accountId: string;
   displayName: string;
   occupied: boolean;
@@ -181,6 +181,8 @@ interface TaxiClientInstance {
   queue: TaxiQueueEntry[];
   byeTimeout?: NodeJS.Timeout;
   currentPowerLevel: number;
+  /** True while the bot is leaving one party to join another (invite accept / queue hop) */
+  isTransitioning: boolean;
 }
 
 // ── Helpers ─────────────────────────────────────────────────
@@ -504,7 +506,7 @@ class TaxiManager {
     return result;
   }
 
-  // ── fnbr Client Creation ──────────────────────────────
+  // ── EpicClient Creation ───────────────────────────────
 
   private async createClient(
     accountId: string,
@@ -517,21 +519,13 @@ class TaxiManager {
       await this.destroyClient(accountId);
     }
 
-    console.log(`[TAXI] Creating fnbr client for ${account.displayName}... (attempt ${retryCount + 1})`);
+    console.log(`[TAXI] Creating EpicClient for ${account.displayName}... (attempt ${retryCount + 1})`);
 
-    // Use deviceAuth exactly like the reference taxi bot
-    const client = new Client({
-      auth: {
-        deviceAuth: {
-          accountId: account.accountId,
-          deviceId: account.deviceId,
-          secret: account.secret,
-        },
-      },
-      debug: (msg: string) => {
-        if (msg.toLowerCase().includes('error') || msg.toLowerCase().includes('fail')) {
-          console.log(`[TAXI-DEBUG] ${account.displayName}: ${msg}`);
-        }
+    const client = new EpicClient({
+      deviceAuth: {
+        accountId: account.accountId,
+        deviceId: account.deviceId,
+        secret: account.secret,
       },
     });
 
@@ -544,6 +538,7 @@ class TaxiManager {
       readyTriggered: false,
       queue: [],
       currentPowerLevel: config.powerLevel,
+      isTransitioning: false,
     };
 
     this.instances.set(accountId, inst);
@@ -571,20 +566,20 @@ class TaxiManager {
     // Set free status immediately
     try { client.setStatus(config.statusLibre); } catch {}
 
-    // Apply cosmetics right after login (like the reference: party.me.setOutfit, setBanner, setLevel)
+    // Apply cosmetics right after login
     try {
-      await inst.client.party.me.setOutfit(config.skin);
+      await inst.client.setOutfit(config.skin);
       this.sendLog(accountId, 'info', `Skin set: ${config.skin}`);
     } catch (e: any) {
       this.sendLog(accountId, 'warn', `Failed to set skin after login: ${e?.message}`);
     }
 
     try {
-      await inst.client.party.me.setBanner('standardbanner15');
+      await inst.client.setBanner('standardbanner15');
     } catch {}
 
     try {
-      await inst.client.party.me.setLevel(String(config.level));
+      await inst.client.setLevel(config.level);
       this.sendLog(accountId, 'info', `Level set: ${config.level}`);
     } catch (e: any) {
       this.sendLog(accountId, 'warn', `Failed to set level after login: ${e?.message}`);
@@ -620,15 +615,18 @@ class TaxiManager {
       try {
         // Only act when the bot itself joins
         if (member.id === client.user?.self?.id) {
+          // Skip if we're in the middle of an invite accept / queue hop —
+          // the calling code will apply cosmetics itself.
+          if (inst.isTransitioning) return;
+
           const freshCfg = await this.getFreshConfig(accountId);
           this.sendLog(accountId, 'info', 'Bot joined party, applying cosmetics...');
           await new Promise((r) => setTimeout(r, 1000));
 
-          // Apply cosmetics + ALWAYS HIGH stats
-          try { await client.party.me.setOutfit(freshCfg.skin); } catch {}
-          try { await client.party.me.setBanner('standardbanner15'); } catch {}
-          try { await client.party.me.setLevel(String(freshCfg.level)); } catch {}
-          // Apply configured power level stats on join
+          // Apply cosmetics + stats
+          try { await client.setOutfit(freshCfg.skin); } catch {}
+          try { await client.setBanner('standardbanner15'); } catch {}
+          try { await client.setLevel(freshCfg.level); } catch {}
           await this.applyStats(inst, freshCfg.powerLevel);
         }
       } catch (e: any) {
@@ -656,7 +654,7 @@ class TaxiManager {
       try {
         if (member.id !== client.user?.self?.id && member.isReady && !inst.readyTriggered) {
           inst.readyTriggered = true;
-          await client.party?.me?.setReadiness(true);
+          await client.setReadiness(true);
           this.sendLog(accountId, 'info', 'Set ready (member readied up)');
         }
       } catch (e: any) {
@@ -849,31 +847,21 @@ class TaxiManager {
 
     // Free → accept invite
     try {
-      // Apply configured power level stats BEFORE accepting
-      try {
-        const { stats: preStats, power: prePower } = buildStatsForPowerLevel(config.powerLevel);
-        await inst.client.party?.me.sendPatch({
-          'Default:FORTStats_j': JSON.stringify(preStats),
-          'Default:CampaignCommanderLoadoutRating_d': prePower,
-          'Default:CampaignBackpackRating_d': prePower,
-        } as any);
-        inst.currentPowerLevel = config.powerLevel;
-        this.sendLog(inst.accountId, 'info', `PL ${config.powerLevel} stats applied before accepting invite`);
-      } catch {}
-
       inst.occupied = true;
       inst.sessionActive = true;
       inst.readyTriggered = false;
       inst.currentPowerLevel = config.powerLevel;
+      inst.isTransitioning = true;
 
       await invite.accept();
+      inst.isTransitioning = false;
       this.sendLog(inst.accountId, 'success', `Joined ${senderName}'s party`);
 
       // Wait for party to settle, apply outfit/banner/level
       await new Promise((r) => setTimeout(r, 1500));
-      try { await inst.client.party.me.setOutfit(config.skin); } catch {}
-      try { await inst.client.party.me.setBanner('standardbanner15'); } catch {}
-      try { await inst.client.party.me.setLevel(String(config.level)); } catch {}
+      try { await inst.client.setOutfit(config.skin); } catch {}
+      try { await inst.client.setBanner('standardbanner15'); } catch {}
+      try { await inst.client.setLevel(config.level); } catch {}
       // Apply configured power level stats on session start
       await this.applyStats(inst, config.powerLevel);
 
@@ -881,7 +869,7 @@ class TaxiManager {
       await new Promise((r) => setTimeout(r, 500));
       try {
         if (config.emote) {
-          await inst.client.party.me.setEmote(config.emote);
+          await inst.client.setEmote(config.emote);
         }
       } catch {}
 
@@ -890,7 +878,7 @@ class TaxiManager {
 
       // Send party message
       try {
-        await inst.client.party?.sendMessage('👋 Hello! GLOW Taxi');
+        inst.client.sendPartyMessage('👋 Hello! GLOW Taxi');
       } catch {}
 
       // Start timer
@@ -900,17 +888,18 @@ class TaxiManager {
       setTimeout(async () => {
         try {
           const { stats: reStats, power: rePower } = buildStatsForPowerLevel(config.powerLevel);
-          await inst.client.party?.me.sendPatch({
+          await inst.client.sendMemberPatch({
             'Default:FORTStats_j': JSON.stringify(reStats),
-            'Default:CampaignCommanderLoadoutRating_d': rePower,
-            'Default:CampaignBackpackRating_d': rePower,
-          } as any);
+            'Default:CampaignCommanderLoadoutRating_d': String(rePower),
+            'Default:CampaignBackpackRating_d': String(rePower),
+          });
           this.sendLog(inst.accountId, 'info', `PL ${config.powerLevel} stats re-applied (3s after join)`);
         } catch {}
       }, 3000);
 
       send('taxi:data-changed', null);
     } catch (e: any) {
+      inst.isTransitioning = false;
       inst.occupied = false;
       inst.sessionActive = false;
       this.sendLog(inst.accountId, 'error', `Error accepting invite: ${e?.message}`);
@@ -925,22 +914,26 @@ class TaxiManager {
     // If it's the bot itself that left
     if (member.id === inst.client.user?.self?.id) {
       this.sendLog(inst.accountId, 'info', 'Left the party');
+      // Skip finishSession if we're transitioning (accepting invite / queue hop)
+      if (inst.isTransitioning) return;
       await this.finishSession(inst, config);
       return;
     }
 
     try {
-      const isLeader = inst.client.party?.me?.isLeader;
+      // In our implementation the bot is always the joiner, not the leader.
+      // But if the party empties out, we should go free.
+      const isLeader = false; // Taxi bots are never party leaders
 
-      if (isLeader && inst.queue.length > 0) {
+      if (inst.queue.length > 0) {
         // Process next in queue
         if (inst.byeTimeout) {
           clearTimeout(inst.byeTimeout);
           inst.byeTimeout = undefined;
         }
         await this.processNextInQueue(inst, config);
-      } else if (isLeader && inst.queue.length === 0) {
-        // No queue, go free (like reference: just leave + set status)
+      } else {
+        // No queue, go free
         inst.occupied = false;
         inst.sessionActive = false;
         if (inst.byeTimeout) {
@@ -953,13 +946,6 @@ class TaxiManager {
 
         this.sendLog(inst.accountId, 'info', 'Party empty, back to free');
         send('taxi:data-changed', null);
-      } else {
-        // Not leader — remove from queue if they were queued
-        const idx = inst.queue.findIndex((q) => q.partyId === member.party?.id);
-        if (idx !== -1) {
-          inst.queue.splice(idx, 1);
-          this.updateOccupiedStatus(inst, config);
-        }
       }
     } catch (e: any) {
       this.sendLog(inst.accountId, 'error', `Error handling member left: ${e?.message}`);
@@ -980,7 +966,7 @@ class TaxiManager {
       if (!inst.sessionActive) return;
 
       try {
-        await inst.client.party?.sendMessage('Bye! 👋 GLOW Taxi');
+        inst.client.sendPartyMessage('Bye! 👋 GLOW Taxi');
       } catch {}
 
       await new Promise((r) => setTimeout(r, 2000));
@@ -1033,9 +1019,11 @@ class TaxiManager {
     send('taxi:data-changed', null);
 
     try {
-      // Leave current party
-      try { await inst.client.leaveParty(); } catch {}
+      // Leave current party (flag transition so member:left doesn't trigger finishSession)
+      inst.isTransitioning = true;
+      try { await inst.client.leaveParty(false); } catch {}
       await new Promise((r) => setTimeout(r, 2000));
+      inst.isTransitioning = false;
 
       // Try to join next person's party
       let joined = false;
@@ -1051,14 +1039,12 @@ class TaxiManager {
         } catch {}
       }
 
-      // Method 2: Try to join by friend/user
+      // Method 2: Try to join by friend presence party ID
       if (!joined) {
         try {
-          // Try sending a join request to the user's current party
-          const friend = inst.client.friends?.get(next.accountId) ||
-                         inst.client.friends?.find((f: any) => f.id === next.accountId);
-          if (friend?.presence?.party?.id) {
-            const party = await inst.client.getParty(friend.presence.party.id);
+          const friendPartyId = inst.client.getFriendPartyId(next.accountId);
+          if (friendPartyId) {
+            const party = await inst.client.getParty(friendPartyId);
             if (party) {
               await party.join();
               joined = true;
@@ -1071,29 +1057,28 @@ class TaxiManager {
         inst.sessionActive = true;
         inst.readyTriggered = false;
 
-        // Apply everything after joining from queue (like reference)
+        // Apply everything after joining from queue
         await new Promise((r) => setTimeout(r, 1500));
-        try { await inst.client.party.me.setOutfit(config.skin); } catch {}
-        try { await inst.client.party.me.setBanner('standardbanner15'); } catch {}
-        try { await inst.client.party.me.setLevel(String(config.level)); } catch {}
-        // Apply configured power level stats on session start
+        try { await inst.client.setOutfit(config.skin); } catch {}
+        try { await inst.client.setBanner('standardbanner15'); } catch {}
+        try { await inst.client.setLevel(config.level); } catch {}
         await this.applyStats(inst, config.powerLevel);
 
         // Emote
         await new Promise((r) => setTimeout(r, 500));
         try {
-          if (config.emote) await inst.client.party.me.setEmote(config.emote);
+          if (config.emote) await inst.client.setEmote(config.emote);
         } catch {}
 
         // Re-apply configured power level stats after 3s
         setTimeout(async () => {
           try {
             const { stats: reStats2, power: rePower2 } = buildStatsForPowerLevel(config.powerLevel);
-            await inst.client.party?.me.sendPatch({
+            await inst.client.sendMemberPatch({
               'Default:FORTStats_j': JSON.stringify(reStats2),
-              'Default:CampaignCommanderLoadoutRating_d': rePower2,
-              'Default:CampaignBackpackRating_d': rePower2,
-            } as any);
+              'Default:CampaignCommanderLoadoutRating_d': String(rePower2),
+              'Default:CampaignBackpackRating_d': String(rePower2),
+            });
           } catch {}
         }, 3000);
 
@@ -1118,14 +1103,14 @@ class TaxiManager {
    * Called after login and when going free.
    */
   private async applyCosmetics(inst: TaxiClientInstance, config: TaxiAccountConfig): Promise<void> {
-    try { await inst.client.party.me.setOutfit(config.skin); } catch {}
-    try { await inst.client.party.me.setBanner('standardbanner15'); } catch {}
-    try { await inst.client.party.me.setLevel(String(config.level)); } catch {}
+    try { await inst.client.setOutfit(config.skin); } catch {}
+    try { await inst.client.setBanner('standardbanner15'); } catch {}
+    try { await inst.client.setLevel(config.level); } catch {}
     await this.applyStats(inst, config.powerLevel);
   }
 
   /**
-   * Apply stats via sendPatch for a given power level.
+   * Apply stats via sendMemberPatch for a given power level.
    */
   private async applyStats(inst: TaxiClientInstance, powerLevel: number): Promise<void> {
     try {
@@ -1133,11 +1118,11 @@ class TaxiManager {
       const fortStat = stats.FORTStats.fortitude;
       console.log(`[TAXI-STATS] PL=${powerLevel} → stat=${fortStat}, power=${power}`);
 
-      await inst.client.party?.me.sendPatch({
+      await inst.client.sendMemberPatch({
         'Default:FORTStats_j': JSON.stringify(stats),
-        'Default:CampaignCommanderLoadoutRating_d': power,
-        'Default:CampaignBackpackRating_d': power,
-      } as any);
+        'Default:CampaignCommanderLoadoutRating_d': String(power),
+        'Default:CampaignBackpackRating_d': String(power),
+      });
     } catch {}
   }
 

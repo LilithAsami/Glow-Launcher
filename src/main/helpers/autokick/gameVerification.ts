@@ -57,10 +57,12 @@ export function extractMatchmakingState(meta: Partial<Record<string, string>>): 
 }
 
 /**
- * Devuelve true si el meta indica que la cuenta está en una misión STW activa.
+ * Devuelve true si el meta indica que la cuenta está en matchmaking o en misión STW activa.
+ * Cualquier estado que no sea NotMatchmaking (ni null) cuenta como activo.
  */
 export function isInSTWMission(meta: Partial<Record<string, string>>): boolean {
-  return extractMatchmakingState(meta) === 'JoiningExistingSession';
+  const state = extractMatchmakingState(meta);
+  return state !== null && state !== 'NotMatchmaking';
 }
 
 // ─── Helper: obtener meta del party vía HTTP (solo para backup polling) ─────
@@ -99,6 +101,93 @@ export async function fetchPartyMeta(
 
 // ─── MCP: leer matches_played ───────────────────────────────────────
 
+// ── Resilient path cache ────────────────────────────────────────────
+// Persiste la ruta donde se encontró matches_played en la respuesta MCP.
+// En memoria: sobrevive la sesión sin hacer await. En storage: sobrevive reinicios.
+
+let _mpPathCache: string[] | null = null;
+const STORAGE_KEY_MP_PATH = 'autokick:matchesPlayedPath';
+
+// Ruta por defecto según estructura MCP actual
+const MP_DEFAULT_PATH = ['profileChanges', '0', 'profile', 'stats', 'attributes', 'matches_played'];
+
+function getAtPath(obj: any, parts: string[]): unknown {
+  let cur: any = obj;
+  for (const p of parts) {
+    if (cur == null) return undefined;
+    cur = cur[p];
+  }
+  return cur;
+}
+
+/** Búsqueda profunda de una clave en un objeto/array. Devuelve {value, path} o null. */
+function deepFind(obj: any, key: string, path: string[] = []): { value: unknown; path: string[] } | null {
+  if (obj == null || typeof obj !== 'object') return null;
+  if (Array.isArray(obj)) {
+    for (let i = 0; i < obj.length; i++) {
+      const r = deepFind(obj[i], key, [...path, String(i)]);
+      if (r) return r;
+    }
+    return null;
+  }
+  for (const k of Object.keys(obj)) {
+    if (k === key) return { value: obj[k], path: [...path, k] };
+    if (obj[k] != null && typeof obj[k] === 'object') {
+      const r = deepFind(obj[k], key, [...path, k]);
+      if (r) return r;
+    }
+  }
+  return null;
+}
+
+async function loadMPPath(storage?: Storage): Promise<string[] | null> {
+  if (_mpPathCache) return _mpPathCache;
+  if (!storage) return null;
+  try {
+    const saved = await storage.get<string[]>(STORAGE_KEY_MP_PATH);
+    if (Array.isArray(saved) && saved.length > 0) { _mpPathCache = saved; return saved; }
+  } catch { /* ignore */ }
+  return null;
+}
+
+async function saveMPPath(p: string[], storage?: Storage): Promise<void> {
+  _mpPathCache = p;
+  if (!storage) return;
+  try { await storage.set(STORAGE_KEY_MP_PATH, p); } catch { /* ignore */ }
+}
+
+/**
+ * Extrae matches_played de la respuesta MCP cruda.
+ * Orden de búsqueda:
+ *   1. Ruta cacheada en memoria (instantáneo)
+ *   2. Ruta por defecto conocida
+ *   3. Deep search completo (lento, solo si cambia la API)
+ * Guarda la ruta encontrada para las próximas llamadas.
+ */
+async function extractMatchesPlayed(raw: any, storage?: Storage): Promise<number> {
+  // 1. Caché en memoria / storage
+  const cached = await loadMPPath(storage);
+  if (cached) {
+    const v = getAtPath(raw, cached);
+    if (typeof v === 'number') return v;
+    // La ruta cacheada ya no es válida → resetear y buscar
+    _mpPathCache = null;
+  }
+  // 2. Ruta conocida por defecto
+  const defVal = getAtPath(raw, MP_DEFAULT_PATH);
+  if (typeof defVal === 'number') {
+    await saveMPPath(MP_DEFAULT_PATH, storage);
+    return defVal;
+  }
+  // 3. Deep search completo
+  const found = deepFind(raw, 'matches_played');
+  if (found && typeof found.value === 'number') {
+    await saveMPPath(found.path, storage);
+    return found.value;
+  }
+  return 0;
+}
+
 /**
  * Lee matches_played del profile campaign vía MCP QueryProfile.
  * Este valor se incrementa exactamente al completar una misión STW
@@ -118,8 +207,7 @@ export async function getMCPMatchesPlayed(
         timeout: 15000,
       }
     );
-    const matchesPlayed: number =
-      response.data?.profileChanges?.[0]?.profile?.stats?.attributes?.matches_played ?? 0;
+    const matchesPlayed = await extractMatchesPlayed(response.data, storage);
     return { matchesPlayed };
   };
 
@@ -141,41 +229,26 @@ export async function getMCPMatchesPlayed(
 
 /**
  * Espera hasta que la misión se complete detectando incremento de matches_played.
- * Comprueba cada intervalMs. Sin límite de tiempo.
- *
- * También detecta salida sin completar: si el party meta deja de indicar
- * JoiningExistingSession antes de que suba matches_played, devuelve false.
+ * Comprueba cada intervalMs. Soporta cancelación externa: cuando cancelToken.cancelled
+ * sea true (nuevo PARTY_UPDATED sin PostMatchmaking), termina y devuelve 'cancelled'.
  */
 export async function waitForMissionComplete(
   accountId: string,
   accessToken: string,
   storage: Storage | undefined,
   matchesPlayedBaseline: number,
+  cancelToken: { cancelled: boolean },
   intervalMs: number = 5000
-): Promise<boolean> {
+): Promise<'completed' | 'cancelled'> {
   let currentToken = accessToken;
 
-  while (true) {
+  while (!cancelToken.cancelled) {
     try {
-      // Comprobar matches_played via MCP
       const mcpState = await getMCPMatchesPlayed(accountId, currentToken, storage);
       if (mcpState.refreshedToken) currentToken = mcpState.refreshedToken;
 
       if (mcpState.matchesPlayed > matchesPlayedBaseline) {
-        // matches_played subió → misión completada (pantalla de victoria)
-        return true;
-      }
-
-      // Check secundario: ¿sigue en misión? (detectar salida sin completar)
-      try {
-        const partyResult = await fetchPartyMeta(accountId, currentToken, storage);
-        if (partyResult.refreshedToken) currentToken = partyResult.refreshedToken;
-        if (!isInSTWMission(partyResult.meta)) {
-          // Salió de la misión sin completarla
-          return false;
-        }
-      } catch {
-        // Si falla el party check, continuar mirando MCP
+        return 'completed';
       }
     } catch {
       // Error de red, continuar
@@ -183,6 +256,8 @@ export async function waitForMissionComplete(
 
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
+
+  return 'cancelled';
 }
 
 // ─── Legacy (compatibilidad) ───────────────────────────────────────────

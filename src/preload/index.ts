@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('glowAPI', {
     notifyTrayChanged: (enabled: boolean) => ipcRenderer.send('settings:tray-changed', enabled),
     notifyStartupChanged: (enabled: boolean) => ipcRenderer.send('settings:startup-changed', enabled),
     detectFortnitePath: () => ipcRenderer.invoke('settings:detect-fortnite-path'),
+    validateFortnitePath: (rawPath: string) => ipcRenderer.invoke('settings:validate-fortnite-path', rawPath),
     onPathDetected: (cb: (p: string) => void) => ipcRenderer.on('settings:path-detected', (_e, p) => cb(p)),
     offPathDetected: () => ipcRenderer.removeAllListeners('settings:path-detected'),
   },
@@ -30,6 +31,8 @@ contextBridge.exposeInMainWorld('glowAPI', {
       submitAuthorizationCode: (code: string) => ipcRenderer.invoke('accounts:submit-auth-code', code),
     cancelAuth: () => ipcRenderer.invoke('accounts:cancel-auth'),
     importFromLaunchers: () => ipcRenderer.invoke('accounts:import-launchers'),
+    importFromGlowJson: () => ipcRenderer.invoke('accounts:import-glow-json'),
+    exportAccounts: () => ipcRenderer.invoke('accounts:export'),
     remove: (accountId: string) => ipcRenderer.invoke('accounts:remove', accountId),
     setMain: (accountId: string) => ipcRenderer.invoke('accounts:set-main', accountId),
     reorder: (orderedIds: string[]) => ipcRenderer.invoke('accounts:reorder', orderedIds),
@@ -98,6 +101,13 @@ contextBridge.exposeInMainWorld('glowAPI', {
     getMissionsForce: () => ipcRenderer.invoke('alerts:get-missions-force'),
     getCompleted: () => ipcRenderer.invoke('alerts:get-completed'),
   },
+  stwExchange: {
+    getData: () => ipcRenderer.invoke('stw-exchange:get-data'),
+    getDataForce: () => ipcRenderer.invoke('stw-exchange:get-data-force'),
+    getGold: () => ipcRenderer.invoke('stw-exchange:get-gold'),
+    buy: (offerId: string, price: number, quantity: number, currencyType: string, currencySubType: string) =>
+      ipcRenderer.invoke('stw-exchange:buy', offerId, price, quantity, currencyType, currencySubType),
+  },
   locker: {
     generate: (filters: { types: string[]; rarities: string[]; chapters: string[]; exclusive: boolean; equippedItemIds?: string[] }) =>
       ipcRenderer.invoke('locker:generate', filters),
@@ -114,6 +124,9 @@ contextBridge.exposeInMainWorld('glowAPI', {
   },
   files: {
     getWorldInfo: () => ipcRenderer.invoke('files:get-worldinfo'),
+    getDevMissions: () => ipcRenderer.invoke('files:get-devmissions'),
+    getFunnyFile: () => ipcRenderer.invoke('files:get-funnyfile'),
+    getDupeFile: () => ipcRenderer.invoke('files:get-dupefile'),
     workerPower: (targetLevel: number) => ipcRenderer.invoke('files:worker-power', targetLevel),
     save: (jsonString: string, defaultName: string) =>
       ipcRenderer.invoke('files:save', jsonString, defaultName),
@@ -133,6 +146,9 @@ contextBridge.exposeInMainWorld('glowAPI', {
     trapHeightModifiedTraps: () => ipcRenderer.invoke('files:trapheight-modified-traps'),
     trapHeightFamilyInfo: () => ipcRenderer.invoke('files:trapheight-family-info'),
     trapHeightData: () => ipcRenderer.invoke('files:trapheight-height-data'),
+    baseHeightStatus: () => ipcRenderer.invoke('files:base-height-status'),
+    baseHeightApply: (newHeight: string) => ipcRenderer.invoke('files:base-height-apply', newHeight),
+    baseHeightRevert: () => ipcRenderer.invoke('files:base-height-revert'),
     fovStatus: () => ipcRenderer.invoke('files:fov-status'),
     fovApply: (fovValue: number) => ipcRenderer.invoke('files:fov-apply', fovValue),
     fovRestore: () => ipcRenderer.invoke('files:fov-restore'),
@@ -280,6 +296,7 @@ contextBridge.exposeInMainWorld('glowAPI', {
     setBanner: (bannerId: string) => ipcRenderer.invoke('ghostequip:set-banner', bannerId),
     setCrowns: (amount: number) => ipcRenderer.invoke('ghostequip:set-crowns', amount),
     setLevel: (level: number) => ipcRenderer.invoke('ghostequip:set-level', level),
+    setPowerLevel: (powerLevel: number) => ipcRenderer.invoke('ghostequip:set-power-level', powerLevel),
   },
   accountMgmt: {
     getInfo: () => ipcRenderer.invoke('accountmgmt:get-info'),

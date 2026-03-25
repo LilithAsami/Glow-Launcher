@@ -5,7 +5,7 @@
 **A feature-rich Electron desktop launcher for Fortnite**  
 Built for Save the World, Battle Royale, and Epic account automation.
 
-`v2.2.0` · `Electron 28` · `TypeScript` · `esbuild`
+`v2.3.1` · `Electron 28` · `TypeScript` · `esbuild`
 
 </div>
 

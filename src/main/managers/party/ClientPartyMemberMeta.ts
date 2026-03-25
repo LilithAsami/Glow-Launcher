@@ -38,7 +38,7 @@ export const defaultPartyMemberMeta: Record<string, string> = {
     '{"MemberSquadAssignmentRequest":{"startingAbsoluteIdx":-1,"targetAbsoluteIdx":-1,"swapTargetMemberId":"INVALID","version":0}}',
   'Default:NumAthenaPlayersLeft_U': '0',
   'Default:PackedState_j':
-    '{"PackedState":{"subGame":"Athena","location":"PreLobby","gameMode":"None","voiceChatStatus":"PartyVoice","hasCompletedSTWTutorial":false,"hasPurchasedSTW":false,"platformSupportsSTW":true,"bReturnToLobbyAndReadyUp":false,"bHideReadyUp":false,"bDownloadOnDemandActive":false,"bIsPartyLFG":false,"bShouldRecordPartyChannel":false}}',
+    '{"PackedState":{"subGame":"Campaign","location":"PreLobby","gameMode":"None","voiceChatStatus":"Disabled","hasCompletedSTWTutorial":true,"hasPurchasedSTW":true,"platformSupportsSTW":true,"bDownloadOnDemandActive":false,"bIsPartyLFG":false,"bRecVoice":false,"bRecText":false,"bIsInAllSelectExperiment":false,"bAllowEmoteBeatSyncing":true,"bUploadLogs":false}}',
   'Default:PlatformData_j':
     '{"PlatformData":{"platform":{"platformDescription":{"name":"","platformType":"DESKTOP","onlineSubsystem":"None","sessionType":"","externalAccountType":"","crossplayPool":"DESKTOP"}},"uniqueId":"INVALID","sessionId":""}}',
   'Default:SharedQuests_j': '{"SharedQuests":{"bcktMap":{},"pndQst":""}}',
